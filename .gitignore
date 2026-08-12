@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# 测试与覆盖率
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# 运行日志（本地测试输出等，不入库）
+*.log
+
+# 工具缓存
+.ruff_cache/
+.mypy_cache/
+
+# 环境变量与密钥（真实端点只在本地填写，绝不入库）
+.env
+.env.local
+.env.*.local
+
+# 本地运行时数据（mock 存储 / VFS / SQLite 审计降级）
+.data/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 操作系统
+.DS_Store
+Thumbs.db
