@@ -1,0 +1,57 @@
+[
+  {
+    "normalized_name": "penicillin",
+    "atc_code": "J01CE01",
+    "aliases": [
+      "青霉素",
+      "盘尼西林",
+      "benzylpenicillin"
+    ],
+    "cross_group": "beta_lactam"
+  },
+  {
+    "normalized_name": "amoxicillin",
+    "atc_code": "J01CA04",
+    "aliases": [
+      "阿莫西林",
+      "再林"
+    ],
+    "cross_group": "beta_lactam"
+  },
+  {
+    "normalized_name": "ceftriaxone",
+    "atc_code": "J01DD04",
+    "aliases": [
+      "头孢曲松",
+      "罗氏芬"
+    ],
+    "cross_group": "beta_lactam"
+  },
+  {
+    "normalized_name": "aspirin",
+    "atc_code": "N02BA01",
+    "aliases": [
+      "阿司匹林",
+      "拜阿司匹灵"
+    ],
+    "cross_group": "nsaid"
+  },
+  {
+    "normalized_name": "ibuprofen",
+    "atc_code": "M01AE01",
+    "aliases": [
+      "布洛芬",
+      "芬必得"
+    ],
+    "cross_group": "nsaid"
+  },
+  {
+    "normalized_name": "azithromycin",
+    "atc_code": "J01FA10",
+    "aliases": [
+      "阿奇霉素",
+      "希舒美"
+    ],
+    "cross_group": null
+  }
+]
