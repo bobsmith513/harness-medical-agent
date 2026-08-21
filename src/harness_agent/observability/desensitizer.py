@@ -1,0 +1,130 @@
+"""出站脱敏中间件（M7）：正则匹配患者标识并替换。
+
+脱敏边界延伸至：
+- 外部模型 API 调用（LLM 请求 prompt 中的患者标识）；
+- 沙箱检查点 state（写检查点前执行）；
+- 日志输出（审计记录的 payload）；
+- Redis 缓存 value（缓存前执行）。
+
+支持的 PII 类型：
+- 身份证号（18 位 / 15 位）→ ``[REDACTED-ID]``
+- 护照号（中国护照 E+8 位数字 / 字母+数字组合带"护照"标记）→ ``[REDACTED-PASSPORT]``
+- 医保卡号 / 医保编号（带"医保"标记的字母数字串）→ ``[REDACTED-INSURANCE]``
+- 手机号（11 位）→ ``[REDACTED-PHONE]``
+- 患者编号（pat-xxx / 患者编号:xxx）→ ``[REDACTED-PATID]``
+- 邮箱地址 → ``[REDACTED-EMAIL]``
+- 患者姓名标记（姓名:xxx / 患者张三）→ ``[REDACTED-NAME]``
+"""
+
+from __future__ import annotations
+
+import re
+
+from harness_agent.contracts.observability import DesensitizedText
+
+__all__ = ["PatternDesensitizer"]
+
+#: 脱敏规则：(pattern, entity_type)
+_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    # 身份证号（18 位：地区6 + 年月日8 + 顺序3 + 校验1）
+    (
+        re.compile(
+            r"\b[1-9]\d{5}(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx]\b"
+        ),
+        "ID",
+    ),
+    # 身份证号（15 位：旧版）
+    (
+        re.compile(r"\b[1-9]\d{5}\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}\b"),
+        "ID",
+    ),
+    # 护照号（标记式：护照号 E12345678 / 护照：AB1234567）
+    # 注意：标记式规则必须排在裸格式之前——"医保卡号: D33010601" 里的
+    # D+8位数字若无医保标记先行接管，会被护照裸格式误吞
+    (
+        re.compile(
+            r"(?:护照|passport)[号码]?\s*[:：]?\s*[A-Za-z]{1,2}\d{7,8}",
+            re.IGNORECASE,
+        ),
+        "PASSPORT",
+    ),
+    # 医保卡号 / 医保编号（标记式，字母数字连字符组合）
+    (
+        re.compile(
+            r"(?:医保|医疗保险|医疗保险证?)[卡账]?[号编号]*\s*[:：]?\s*[A-Za-z0-9-]{8,20}",
+        ),
+        "INSURANCE",
+    ),
+    # 护照号（中国护照：字母 E + 8 位数字，G/D/S/P 等公务/因私护照同构；
+    # 裸格式兜底——无任何上文标记时的独立护照号）
+    (
+        re.compile(r"\b[EeGgDdSsPp]\d{8}\b"),
+        "PASSPORT",
+    ),
+    # 手机号（11 位，1 开头）
+    (
+        re.compile(r"\b1[3-9]\d{9}\b"),
+        "PHONE",
+    ),
+    # 患者编号（pat-xxx 或 patient_id=xxx）
+    (
+        re.compile(r"\bpat-[a-z0-9]+\b", re.IGNORECASE),
+        "PATID",
+    ),
+    (
+        re.compile(r"patient[_\s]*id\s*[:=]\s*\S+", re.IGNORECASE),
+        "PATID",
+    ),
+    # 邮箱
+    (
+        re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"),
+        "EMAIL",
+    ),
+    # 姓名标记（姓名:xxx / 患者 xxx）
+    (
+        re.compile(r"姓名\s*[:：]\s*[\u4e00-\u9fa5]{2,4}"),
+        "NAME",
+    ),
+    (
+        re.compile(r"患者[\u4e00-\u9fa5]{2,4}(?=[\s,，。]|$)"),
+        "NAME",
+    ),
+]
+
+
+class PatternDesensitizer:
+    """正则脱敏中间件：出站调用前去除患者标识。
+
+    实现简单、零外部依赖，适合 demo 与中等合规要求场景；
+    生产环境可替换为 NER 模型脱敏器（实现同一 ``Desensitizer`` 接口）。
+    """
+
+    def __init__(self, patterns: list[tuple[re.Pattern[str], str]] | None = None) -> None:
+        self._patterns = patterns or _PATTERNS
+
+    def desensitize(self, text: str) -> DesensitizedText:
+        """脱敏：替换 PII 为占位符，记录被移除的实体。"""
+        removed: list[str] = []
+        result = text
+
+        for pattern, entity_type in self._patterns:
+            matches = pattern.findall(result)
+            for match in matches:
+                if isinstance(match, tuple):
+                    match = match[0] if match else ""
+                removed.append(f"{entity_type}:{match}")
+            result = pattern.sub(f"[REDACTED-{entity_type}]", result)
+
+        return DesensitizedText(text=result, removed_entities=removed)
+
+    def desensitize_dict(self, data: dict) -> dict:
+        """递归脱敏字典中的字符串值（检查点 state / 日志 payload 用）。"""
+        result = {}
+        for key, value in data.items():
+            if isinstance(value, str):
+                result[key] = self.desensitize(value).text
+            elif isinstance(value, dict):
+                result[key] = self.desensitize_dict(value)
+            else:
+                result[key] = value
+        return result
