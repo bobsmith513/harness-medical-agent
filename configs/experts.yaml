@@ -1,0 +1,49 @@
+# ============================================================================
+# 专家声明式配置（M4）
+#
+# 新增专家 = 在此文件追加一个条目，主流程零改动：
+# 主 Agent 按需委派（ExpertTask.expert 与此处的 name 对应）。
+#
+# 字段说明：
+#   name:        专家唯一标识（ExpertTask.expert 引用值）
+#   kind:        委派语义：
+#                  reasoning  推理专家（系统内唯一合法的临床结论产出方）
+#                  memory     记忆专家（上下文装配，复诊免重复问询）
+#                  generic    通用专家（结构化信息处理等）
+#   description: 专家能力描述（供主 Agent 规划任务清单时参考）
+#   instruction: 委派指令模板（{placeholders} 由主 Agent 按轮次填充）
+#   inputs:      期望输入键名（主 Agent 委派前校验，缺键 fail-closed）
+# ============================================================================
+
+experts:
+  - name: reasoning_expert
+    kind: reasoning
+    description: 临床推理专家：基于证据包生成"证据引用-逐步推断-结论"三段式推理链并自检，是系统内唯一合法的临床结论产出方。
+    instruction: |
+      基于已通过装配复核的证据包，针对患者问题完成临床推理。
+      要求：结论必须可回溯至证据（引用 evidence_id）；推理链逐步自检；
+      证据不足时如实声明证据缺口，不得臆测。
+      患者问题：{question}
+    inputs:
+      - question
+      - evidence_pack
+
+  - name: memory_expert
+    kind: memory
+    description: 记忆专家：装配患者上下文（稳定/易变事实、过敏史硬规则、已转正记忆），复诊场景免重复问询。
+    instruction: |
+      装配患者上下文：稳定事实命中充分即免重复问询；易变事实列确认式追问项；
+      过敏史走硬规则精确匹配（不向量化召回）。
+      患者问题：{question}
+    inputs:
+      - question
+
+  - name: intake_expert
+    kind: generic
+    description: 信息登记专家：将患者口述的既往史、用药变化等结构化为记忆草稿（未审核，不进召回索引）。
+    instruction: |
+      将患者口述内容结构化为记忆草稿字段（subject / content /易变标记）。
+      草稿默认 unreviewed，仅会话内可见，审核通过才可被召回。
+      患者口述：{utterance}
+    inputs:
+      - utterance
