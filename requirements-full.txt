@@ -1,0 +1,35 @@
+# ============================================================================
+# harness-medical-agent 完整部署依赖（全能力）
+#
+# 适用场景：生产全量部署（真实嵌入 + Milvus + MCP 服务 + LLM 端点）
+#   - 基础依赖 + LLM 客户端 + BGE 嵌入/精排 + Milvus 向量库 + MCP 封装
+#
+# 安装：
+#   pip install -r requirements-full.txt
+#   pip install -e .                # 项目本体（src-layout，必须安装）
+#
+# 注意：torch 默认拉 CUDA 轮子（约 2GB）。
+#   纯 CPU 环境请先单独装 CPU 版：
+#     pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   再执行本文件安装（torch 已满足约束则跳过）。
+# ============================================================================
+-r requirements-prod.txt
+
+# ---- BGE 真实嵌入与精排（可选，默认哈希嵌入零依赖）----
+# 启用方式：HARNESS_RETRIEVAL__EMBEDDING_PROVIDER=bge
+#           HARNESS_RETRIEVAL__RERANKER_ENABLED=true
+sentence-transformers>=3.0     # BAAI/bge-large-zh 嵌入 + bge-reranker-v2-m3 精排
+torch>=2.2                     # 推理后端（CPU 版见上方注释）
+
+# ---- Milvus 向量存储（可选，默认本地 numpy 零依赖）----
+# 启用方式：HARNESS_RETRIEVAL__STORE=milvus
+#           HARNESS_RETRIEVAL__MILVUS_URI=http://localhost:19530
+# 服务端：docker compose -f docker-compose.milvus.yaml up -d
+pymilvus>=2.4                  # Milvus 客户端
+
+# ---- MCP 检索供给服务（可选，默认进程内直调）----
+# 启动方式：uv run harness-mcp-retrieval（stdio 传输）
+fastmcp>=2.3                   # MCP server 封装
+
+# ---- 间接依赖（bge 栈随 sentence-transformers/torch 拉取，显式声明便于审计）----
+numpy>=1.26                    # sentence-transformers / torch 的间接依赖

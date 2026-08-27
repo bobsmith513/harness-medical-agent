@@ -1,0 +1,17 @@
+# ============================================================================
+# harness-medical-agent 开发环境依赖
+#
+# 适用场景：本地开发 / 跑测试 / lint 检查 / CI
+#
+# 安装：
+#   pip install -r requirements-dev.txt
+#   pip install -e .                # 项目本体（src-layout，必须安装）
+# ============================================================================
+-r requirements.txt
+
+# ---- 测试 ----
+pytest>=8.0                    # 测试框架（详见 README 测试体系章节）
+pytest-cov>=5.0                # 覆盖率报告
+
+# ---- 静态检查 ----
+ruff>=0.4                      # lint + format（line-length=100, target=py310）

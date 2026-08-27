@@ -1,0 +1,15 @@
+# ============================================================================
+# harness-medical-agent 生产部署依赖（连接真实 LLM 端点）
+#
+# 适用场景：接入 vLLM / 在线 API，全链路真实推理
+#   - 基础依赖 + OpenAI 兼容客户端（httpx）
+#   - .env 填入 8 个字段即切换（见 README「只需填这几个字段」）
+#
+# 安装：
+#   pip install -r requirements-prod.txt
+#   pip install -e .                # 项目本体（src-layout，必须安装）
+# ============================================================================
+-r requirements.txt
+
+# ---- LLM 客户端（OpenAI 兼容端点：vLLM 部署 / 在线 API）----
+httpx>=0.27                    # OpenAICompatClient HTTP 调用
