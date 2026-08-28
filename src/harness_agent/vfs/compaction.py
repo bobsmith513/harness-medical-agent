@@ -229,10 +229,15 @@ class ContextCompactor:
         return total
 
     @staticmethod
-    def estimate_compressed_tokens(context: SessionContext) -> int:
-        """估算压缩后的上下文 token（仅最近 N 轮 + 指针引用）。"""
+    def estimate_compressed_tokens(context: SessionContext, keep: int = 3) -> int:
+        """估算压缩后的上下文 token（仅最近 ``keep`` 轮 + 指针引用）。
+
+        与 ``estimate_full_context_tokens`` 的区别就在轮数截断：
+        溢出轮已持久化至 VFS，上下文只保留最近 ``keep`` 轮原文 +
+        指向持久化文件的指针（指针开销远小于整轮原文）。
+        """
         total = 0
-        for turn in context.recent_turns:
+        for turn in context.recent_turns[-keep:]:
             total += turn.token_count or _estimate_tokens(turn.user_input)
         # 文件指针约占完整轮的 5-10%
         for ptr in context.file_pointers.values():

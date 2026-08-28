@@ -48,10 +48,10 @@ def output_gate(gates):
 
 class TestAdversarialSuiteShape:
     def test_suite_has_minimal_coverage(self):
-        """每类 1-2 条代表：总量 >= 7，阳性样本 >= 5。"""
-        assert len(ADVERSARIAL_SAMPLES) >= 7
+        """种子集基线：总量 >= 30，阳性样本 >= 20（回归底线，扩词典须同步追加）。"""
+        assert len(ADVERSARIAL_SAMPLES) >= 30
         positives = [s for s in ADVERSARIAL_SAMPLES if s.expect_blocked]
-        assert len(positives) >= 5
+        assert len(positives) >= 20
         assert all(s.expected_drugs for s in positives)
 
 

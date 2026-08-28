@@ -19,9 +19,9 @@ fail-closed：``allowed=False`` 即拦截，调用方必须 interrupt
 from __future__ import annotations
 
 import json
-import re
 
 from harness_agent.contracts.llm import LLMClient, LLMMessage
+from harness_agent.llm.json_utils import extract_json_object
 from harness_agent.models.audit import GateVerdict
 from harness_agent.models.evidence import EvidencePack
 from harness_agent.models.reasoning import ClinicalConclusion
@@ -150,34 +150,53 @@ class LLMJudgeGate:
 
     @staticmethod
     def _parse_judge_output(text: str) -> dict:
-        """解析 judge JSON 输出（容错 + Mock 兜底）。"""
-        cleaned = re.sub(r"```(?:json)?|```", "", text).strip()
-        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
-        if not match:
-            # Mock 兜底：无法解析时默认通过（规则前置已拦主要问题）
+        """解析 judge JSON 输出（fail-closed：解析失败即拦截）。
+
+        与路由器共用 ``extract_json_object``（括号深度扫描，字符串感知），
+        替代旧贪婪正则 ``\\{.*\\}`` + DOTALL——多段 JSON 输出不再跨段
+        误匹配，嵌套对象与字符串内花括号均可正确配平。
+        """
+        fragment = extract_json_object(text)
+        if fragment is None:
             return {
-                "faithfulness": 1.0,
+                "faithfulness": 0.0,
                 "has_hallucination": False,
                 "causal_inversion": False,
-                "reason": "judge 输出不可解析，规则前置已通过",
+                "reason": "judge 输出不可解析（无法评估忠实度，fail-closed 拦截）",
             }
         try:
-            return json.loads(match.group(0))
+            parsed = json.loads(fragment)
         except json.JSONDecodeError:
             return {
-                "faithfulness": 1.0,
+                "faithfulness": 0.0,
                 "has_hallucination": False,
                 "causal_inversion": False,
-                "reason": "judge JSON 解析失败",
+                "reason": "judge JSON 解析失败（fail-closed 拦截）",
             }
+        return (
+            parsed
+            if isinstance(parsed, dict)
+            else {
+                "faithfulness": 0.0,
+                "has_hallucination": False,
+                "causal_inversion": False,
+                "reason": "judge 输出 JSON 顶层非对象（fail-closed 拦截）",
+            }
+        )
 
     def _build_verdict(self, verdict: dict) -> GateVerdict:
-        """根据 judge 输出构造裁决。"""
-        faithfulness = float(verdict.get("faithfulness", 1.0))
-        has_hallucination = bool(verdict.get("has_hallucination", False))
-        causal_inversion = bool(verdict.get("causal_inversion", False))
-        reason = verdict.get("reason", "")
+        """根据 judge 输出构造裁决（字段缺失/类型异常按拦截处理）。"""
+        faithfulness = self._safe_float(verdict.get("faithfulness"))
+        has_hallucination = self._safe_bool(verdict.get("has_hallucination"))
+        causal_inversion = self._safe_bool(verdict.get("causal_inversion"))
+        reason = str(verdict.get("reason", ""))
 
+        if faithfulness is None:
+            return GateVerdict(
+                gate="quality_judge",
+                allowed=False,
+                reason=f"LLM-judge 拦截：忠实度字段缺失或非数值（{reason}）",
+            )
         if has_hallucination:
             return GateVerdict(
                 gate="quality_judge",
@@ -201,3 +220,26 @@ class LLMJudgeGate:
             allowed=True,
             reason=f"质量门禁通过：忠实度 {faithfulness:.2f} ≥ {self._threshold}，无臆测/因果倒置",
         )
+
+    @staticmethod
+    def _safe_float(value: object) -> float | None:
+        """忠实度解析：非数值（None/字符串等）返回 None → 拦截。"""
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int | float):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError:
+                return None
+        return None
+
+    @staticmethod
+    def _safe_bool(value: object) -> bool:
+        """布尔解析：字符串 'false'/'False' 按假处理（bool('false') 为真的陷阱）。"""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() == "true"
+        return False

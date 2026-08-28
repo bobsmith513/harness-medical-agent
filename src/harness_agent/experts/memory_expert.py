@@ -13,6 +13,11 @@ from harness_agent.safety import SafetyStack, build_safety_stack
 
 __all__ = ["MemoryExpertImpl"]
 
+#: 记忆装配召回窗口：患者分区条目与共享知识库竞争固定 top_k 名额，但
+#: 后者终将被 provenance 分类丢弃——用更大的窗口避免患者事实被知识库
+#: 条目挤占（复诊免重复问询的召回质量优先于精排截断的节省）。
+_MEMORY_ASSEMBLY_TOP_K = 12
+
 
 class MemoryExpertImpl:
     """记忆专家实现（M1 ``MemoryExpert`` 契约）。
@@ -42,17 +47,23 @@ class MemoryExpertImpl:
 
     def assemble(self, query: RetrievalQuery, context: SessionContext) -> ContextBundle:
         """检索患者记忆 + 装配上下文包。"""
-        # 软记忆召回（M3 门面：含三道闸门裁决，分区隔离强制）
-        pack = self._retrieval.retrieve(query)
+        # 软记忆召回（M3 门面：含三道闸门裁决，分区隔离强制）。
+        # 召回窗口取装配专用下限（见 _MEMORY_ASSEMBLY_TOP_K）。
+        pack = self._retrieval.retrieve(
+            query.model_copy(update={"top_k": max(query.top_k, _MEMORY_ASSEMBLY_TOP_K)})
+        )
 
-        # 稳定/易变事实分类（来自召回证据的 metadata）
+        # 稳定/易变事实分类：按 Evidence.provenance 驱动（M1 契约字段）——
+        # - doctor_verified：病历核实事实（血型、既往史）→ 稳定，免重复问询；
+        # - model_inference：推断性/待核实内容 → 易变，走确认式追问；
+        # - knowledge_base：通用指南条目，非患者事实，不进入患者上下文
+        #   （进入 stable 会把"CAP 指南"当成本人病史，进入 volatile 同样失真）。
         stable_facts: list[str] = []
         volatile_facts: list[str] = []
         for evidence in pack.evidence:
-            # metadata 中 volatility 字段优先，无则按 provenance 启发式
-            if "stable" in str(evidence):
+            if evidence.provenance == "doctor_verified":
                 stable_facts.append(evidence.content)
-            else:
+            elif evidence.provenance == "model_inference":
                 volatile_facts.append(evidence.content)
 
         # 过敏史走硬规则精确匹配（非向量召回）

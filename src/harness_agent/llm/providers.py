@@ -47,12 +47,12 @@ PROVIDER_PRESETS: dict[str, ProviderPreset] = {
     ),
     # 阿里云百炼（DashScope 兼容模式）：qwen3 系列，同时托管 deepseek/kimi/glm
     "qwen": ProviderPreset(
-        base_url="https://ws-hw8xxlddmuozxjdo.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-        reasoning_model="qwen3.8-2.4t-a95b",
-        judge_model="qwen3.8-2.4t-a95b",
-        router_model="qwen3.8-2.4t-a95b",
-        orchestrator_model="qwen3.8-2.4t-a95b",
-        key_portal="https://console.aliyun.com/quickstart/compatible-mode",
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        reasoning_model="qwen3.8-max",
+        judge_model="qwen3.8-flash",
+        router_model="qwen3.8-flash",
+        orchestrator_model="qwen3.7-plus",
+        key_portal="https://bailian.console.aliyun.com/",
     ),
     # 智谱 GLM：glm-4.6 / glm-4.5-air
     "zhipu": ProviderPreset(

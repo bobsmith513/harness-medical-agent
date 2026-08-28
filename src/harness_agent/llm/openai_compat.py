@@ -12,9 +12,19 @@ judge / router），端点留空时调用方应注入 ``MockLLMClient``——本
 
 from __future__ import annotations
 
+import threading
+
 from harness_agent.contracts.llm import LLMMessage, LLMResult, LLMRole
 
-__all__ = ["OpenAICompatClient"]
+__all__ = ["OpenAICompatClient", "OpenAICompatResponseError"]
+
+
+class OpenAICompatResponseError(RuntimeError):
+    """端点返回了不可用的响应（非 JSON / 结构缺字段 / 内容非文本）。
+
+    与裸 KeyError/TypeError 栈不同：上层编排的 fail-closed 捕获能拿到
+    明确的错误分类与上下文（role / 端点 / 缺失字段）。
+    """
 
 
 class OpenAICompatClient:
@@ -55,6 +65,8 @@ class OpenAICompatClient:
         self._model = model
         self._timeout_s = timeout_s
         self._client = httpx.Client(timeout=timeout_s)
+        #: 调用记录锁：httpx.Client 线程安全，但 calls 追加需防并发交错
+        self._calls_lock = threading.Lock()
         self.calls: list[list[LLMMessage]] = []
 
     def complete(
@@ -64,7 +76,8 @@ class OpenAICompatClient:
         temperature: float = 0.2,
         max_tokens: int | None = None,
     ) -> LLMResult:
-        self.calls.append(list(messages))
+        with self._calls_lock:
+            self.calls.append(list(messages))
         payload: dict[str, object] = {
             "model": self._model,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
@@ -78,11 +91,39 @@ class OpenAICompatClient:
             headers={"Authorization": f"Bearer {self._api_key}"},
         )
         response.raise_for_status()
-        data = response.json()
-        choice = data["choices"][0]["message"]
-        usage = data.get("usage", {})
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise OpenAICompatResponseError(
+                f"端点返回非 JSON 响应（role={self.role}, url={self._base_url}, "
+                f"status={response.status_code}）"
+            ) from exc
+        if not isinstance(data, dict):
+            raise OpenAICompatResponseError(
+                f"端点响应顶层非 JSON 对象（role={self.role}, url={self._base_url}）"
+            )
+        choices = data.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise OpenAICompatResponseError(
+                f"端点响应缺少 choices（role={self.role}, url={self._base_url}, "
+                f"keys={sorted(data.keys())}）"
+            )
+        choice = choices[0]
+        message = choice.get("message") if isinstance(choice, dict) else None
+        if not isinstance(message, dict) or "content" not in message:
+            raise OpenAICompatResponseError(
+                f"端点响应首个 choice 缺少 message.content（role={self.role}, "
+                f"url={self._base_url}）"
+            )
+        content = message["content"]
+        if content is not None and not isinstance(content, str):
+            raise OpenAICompatResponseError(
+                f"端点响应 content 非文本（role={self.role}, url={self._base_url}, "
+                f"type={type(content).__name__}）"
+            )
+        usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
         return LLMResult(
-            text=choice["content"],
+            text=content or "",
             prompt_tokens=usage.get("prompt_tokens", 0),
             completion_tokens=usage.get("completion_tokens", 0),
             model=self._model,

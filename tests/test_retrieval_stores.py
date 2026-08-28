@@ -291,3 +291,33 @@ class TestMilvusSkeleton:
     def test_missing_dependency_hint(self):
         with pytest.raises(ImportError, match="milvus"):
             MilvusVectorStore(uri="http://localhost:19530")
+
+
+# ---------------------------------------------------------------------------
+# 过滤字面量白名单（静态分析整改项）：filter 表达式注入防护
+# ---------------------------------------------------------------------------
+class TestFilterLiteral:
+    """Milvus filter 表达式为字符串拼接构建，值必须经白名单校验。"""
+
+    def test_valid_identifiers_pass(self):
+        from harness_agent.retrieval.vector_store import _filter_literal
+
+        assert _filter_literal("pat-001") == "pat-001"
+        assert _filter_literal("P1") == "P1"
+        assert _filter_literal("ev-3e20167f6dae") == "ev-3e20167f6dae"
+        assert _filter_literal("") == ""  # 共享分区哨兵值
+
+    @pytest.mark.parametrize(
+        "malicious",
+        [
+            'pat-001" or patient_id != "',  # 闭合引号改写表达式
+            "pat-001; drop collection",  # 分号注入
+            "pat\\-001",  # 反斜杠转义逃逸
+            "pat 001",  # 空格（fold 后标识符不应含空白）
+        ],
+    )
+    def test_malicious_values_rejected(self, malicious):
+        from harness_agent.retrieval.vector_store import _filter_literal
+
+        with pytest.raises(ValueError, match="非法字符"):
+            _filter_literal(malicious)

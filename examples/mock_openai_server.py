@@ -76,7 +76,12 @@ def _router_json() -> str:
 
 
 def build_completion_response(messages: list[dict]) -> str:
-    """按 system 提示词路由到对应角色的合法应答。"""
+    """按 system 提示词路由到对应角色的合法应答。
+
+    匹配顺序与标记按各角色系统提示词的首句自述（"质量门禁"/"路由器"/
+    "推理专家"）——旧版按"临床推理"关键词匹配会把路由请求（其提示词含
+    "是否需要临床推理"）误判为推理角色，导致 LLM 兜底路由恒失败。
+    """
     system = ""
     user_content = ""
     for msg in messages:
@@ -85,10 +90,13 @@ def build_completion_response(messages: list[dict]) -> str:
         else:
             user_content += str(msg.get("content", ""))
 
+    if "质量门禁" in system:
+        return _judge_json()
+    if "路由器" in system:
+        return _router_json()
     if "推理专家" in system or "临床推理" in system:
         return _reasoning_chain_json(system, user_content)
-    if "质量门禁" in system or "judge" in system.lower():
-        return _judge_json()
+    # 未识别角色：按路由器处理（最宽松的兜底，输出仍是合法二值裁决）
     return _router_json()
 
 

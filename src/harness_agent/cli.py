@@ -23,15 +23,15 @@ import argparse
 import sys
 from pathlib import Path
 
-# 自举：直接以文件路径运行（python src/harness_agent/main.py）时，
+# 自举：直接以文件路径运行（python src/harness_agent/cli.py）时，
 # 把包根目录 src/ 加入搜索路径，避免 ModuleNotFoundError: harness_agent
 _PKG_ROOT = Path(__file__).resolve().parent.parent
 if str(_PKG_ROOT) not in sys.path:
     sys.path.insert(0, str(_PKG_ROOT))
 
 from harness_agent.config.settings import Settings, get_settings, reset_settings  # noqa: E402
-from harness_agent.contracts.experts import ContextBundle  # noqa: E402
 from harness_agent.contracts.retrieval import StoredChunk  # noqa: E402
+from harness_agent.experts.memory_expert import MemoryExpertImpl  # noqa: E402
 from harness_agent.experts.reasoning_expert import ReasoningExpertImpl  # noqa: E402
 from harness_agent.fixtures import KNOWLEDGE_ENTRIES, PATIENT_PROFILES  # noqa: E402
 from harness_agent.llm.wiring import build_llm_client, describe_llm_setup  # noqa: E402
@@ -39,18 +39,21 @@ from harness_agent.models.session import SessionContext  # noqa: E402
 from harness_agent.observability import PatternDesensitizer  # noqa: E402
 from harness_agent.orchestrator import build_orchestrator  # noqa: E402
 from harness_agent.retrieval.wiring import build_retrieval_stack  # noqa: E402
-from harness_agent.safety import build_safety_stack  # noqa: E402
 
 __all__ = ["main"]
 
 
-#: 每位患者的样例问诊问题（交互模式回车展示，可直接输入）
+#: 每位患者的样例问诊问题（交互模式回车展示，可直接输入）；
+#: 首条为记忆召回类（no_reasoning 路径，验证记忆专家装配），
+#: 其余为推理类（need_reasoning 路径，验证三段式推理链 + 双门禁）。
 SAMPLE_QUESTIONS: dict[str, list[str]] = {
     "pat-001": [
+        "我的高血压病史有多久了？",
         "咳嗽三天伴发热，用药方案怎么定？",
         "社区获得性肺炎怎么治，需要住院吗？",
     ],
     "pat-002": [
+        "我之前的病史记录是什么？",
         "关节疼痛加重，类风湿怎么用药？",
         "类风湿关节炎的治疗方案有哪些？",
     ],
@@ -59,6 +62,7 @@ SAMPLE_QUESTIONS: dict[str, list[str]] = {
         "社区获得性肺炎的副作用和禁忌？",
     ],
     "pat-004": [
+        "我之前的病史和血糖情况记录是什么？",
         "血糖控制得怎么样，需要调药吗？",
         "二甲双胍的剂量和副作用？",
     ],
@@ -117,24 +121,34 @@ def _banner(settings: Settings) -> None:
 # ---------------------------------------------------------------------------
 
 
-class _ProfileMemoryExpert:
-    """记忆专家：从患者档案装配上下文（no_reasoning 路径）。"""
+def _patient_memory_chunks(profiles: list) -> list[StoredChunk]:
+    """患者档案 → 分区记忆 chunk（doctor_verified 稳定 / model_inference 易变）。
 
-    name = "memory_expert"
-
-    def __init__(self, profiles: list) -> None:
-        self._profiles = {p.patient_id: p for p in profiles}
-
-    def assemble(self, query, context):
-        profile = self._profiles.get(context.patient_id)
-        safety = build_safety_stack()
-        allergies = safety.allergy_store.get(context.patient_id)
-        return ContextBundle(
-            patient_id=context.patient_id,
-            allergies=allergies,
-            stable_facts=profile.stable_facts if profile else [],
-            volatile_facts=profile.volatile_facts if profile else [],
-        )
+    记忆专家（MemoryExpertImpl）经检索层召回这些 chunk 并按
+    provenance 分类装配——替代早期"直接读静态档案"的演示替身，
+    主链路与 M3 分区隔离 / M5 装配逻辑完全一致。
+    """
+    chunks: list[StoredChunk] = []
+    for profile in profiles:
+        for i, fact in enumerate(profile.stable_facts):
+            chunks.append(
+                StoredChunk(
+                    chunk_id=f"mem-{profile.patient_id}-s{i}",
+                    patient_id=profile.patient_id,
+                    content=fact,
+                    metadata={"provenance": "doctor_verified", "confidence": "high"},
+                )
+            )
+        for i, fact in enumerate(profile.volatile_facts):
+            chunks.append(
+                StoredChunk(
+                    chunk_id=f"mem-{profile.patient_id}-v{i}",
+                    patient_id=profile.patient_id,
+                    content=fact,
+                    metadata={"provenance": "model_inference", "confidence": "medium"},
+                )
+            )
+    return chunks
 
 
 def _build_agent(settings: Settings):
@@ -146,6 +160,7 @@ def _build_agent(settings: Settings):
     stack = build_retrieval_stack(settings)
 
     kb_count = 0
+    mem_count = 0
     if settings.app.seed_sample_data:
         chunks = [
             StoredChunk(
@@ -155,20 +170,22 @@ def _build_agent(settings: Settings):
             )
             for entry in KNOWLEDGE_ENTRIES
         ]
-        stack.service.index(chunks)
+        memories = _patient_memory_chunks(PATIENT_PROFILES)
+        stack.service.index(chunks + memories)
         kb_count = len(chunks)
+        mem_count = len(memories)
 
     agent = build_orchestrator(
         experts={
             "reasoning_expert": ReasoningExpertImpl(llm=reasoning_llm, retrieval=stack.service),
-            "memory_expert": _ProfileMemoryExpert(PATIENT_PROFILES),
+            "memory_expert": MemoryExpertImpl(retrieval=stack.service),
         },
         retrieval=stack.service,
         router_llm=router_llm,
         judge_llm=judge_llm,
         settings=settings,
     )
-    return agent, kb_count
+    return agent, kb_count, mem_count
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +276,12 @@ def _interactive(agent) -> None:
     while True:
         print()
         prompt = f"[患者 {current.patient_id} {current.name}] 回车看样例问题 / q 退出 / 1-4 切换 > "
-        choice = input(prompt).strip()
+        try:
+            choice = input(prompt).strip()
+        except (EOFError, KeyboardInterrupt):
+            # Ctrl+D / Ctrl+C / stdin 关闭：优雅退出，不裸抛堆栈
+            print()
+            break
         if choice.lower() in ("q", "quit", "exit"):
             break
         if choice.isdigit() and 1 <= int(choice) <= len(PATIENT_PROFILES):
@@ -316,7 +338,7 @@ def main() -> None:
         return
 
     try:
-        agent, kb_count = _build_agent(settings)
+        agent, kb_count, mem_count = _build_agent(settings)
     except ValueError as exc:
         print(f"✗ {exc}")
         print()
@@ -328,6 +350,7 @@ def main() -> None:
 
     if kb_count:
         print(f"  知识库入库: {kb_count} 条（合成样例，可 index 接口替换真实数据）")
+        print(f"  患者记忆分区: {mem_count} 条（记忆专家经检索召回装配）")
         print("  安全栈: pat-001 青霉素过敏 / pat-002 阿司匹林过敏（M2 种子）")
     else:
         print("  知识库: 空库运行（--no-seed；检索不命中时推理链走兜底）")

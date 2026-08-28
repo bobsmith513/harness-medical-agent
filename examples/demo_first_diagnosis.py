@@ -261,13 +261,36 @@ def main() -> None:
     _print_section("步骤 7：全链路 trace 事件")
     from harness_agent.models.audit import TraceEvent
 
-    trace_events = [
-        ("route", {"decision": "need_reasoning", "by_rule": True}),
-        ("retrieve", {"query": user_query, "evidence_count": 3}),
-        ("reason", {"chain_steps": 3, "self_check": True}),
-        ("gate_check", {"quality": "pass", "drug_safety": "pass"}),
-        ("conclude", {"statement": "阿奇霉素 500mg qd × 3-5 天"}),
+    # payload 全部取自本轮编排的真实产出（非手写字面量）
+    trace_events: list[tuple[str, dict]] = [
+        (
+            "route",
+            {
+                "decision": result.route.decision,
+                "by_rule": result.route.by_rule,
+            },
+        ),
     ]
+    if result.evidence_pack is not None:
+        ev_count = len(result.evidence_pack.evidence)
+        trace_events.append(("retrieve", {"query": user_query, "evidence_count": ev_count}))
+    if result.conclusion is not None:
+        chain = result.conclusion.reasoning_chain
+        trace_events.append(
+            ("reason", {"chain_steps": len(chain.steps), "self_check": chain.self_check_passed})
+        )
+    if result.gate_verdicts:
+        trace_events.append(
+            (
+                "gate_check",
+                {v.gate: ("pass" if v.allowed else "block") for v in result.gate_verdicts},
+            )
+        )
+        if all(v.allowed for v in result.gate_verdicts) and result.conclusion is not None:
+            trace_events.append(("conclude", {"statement": result.conclusion.statement}))
+    elif result.escalation is not None:
+        trace_events.append(("escalate", {"reason": result.escalation.reason}))
+
     for event_type, payload in trace_events:
         event = TraceEvent(
             trace_id="trace-first",

@@ -106,15 +106,19 @@ class TestReasoningExpertChain:
         assert conclusion.reasoning_chain.self_check_passed is True
         assert "ev-1" in conclusion.cited_evidence_ids
 
-    def test_fallback_chain_on_unparsable_output(self):
-        """LLM 输出不可解析 → 兜底链（以首条证据为据）。"""
+    def test_unparsable_output_fails_closed(self):
+        """LLM 输出不可解析 → 抛异常转升级（fail-closed，绝不交付兜底结论）。"""
         llm = MockLLMClient(role="reasoning", script=["这不好说吧"])
         expert = ReasoningExpertImpl(llm=llm)
-        conclusion = expert.reason(_task(), _pack(), _context())
-        chain = conclusion.reasoning_chain
-        assert chain.self_check_passed is True
-        assert chain.steps[0].kind == "evidence"
-        assert chain.steps[0].citations == ["ev-1"]
+        with pytest.raises(ValueError, match="fail-closed"):
+            expert.reason(_task(), _pack(), _context())
+
+    def test_empty_output_fails_closed(self):
+        """LLM 空输出 → 抛异常转升级（不构造任何"最小合法链"）。"""
+        llm = MockLLMClient(role="reasoning", script=[""])
+        expert = ReasoningExpertImpl(llm=llm)
+        with pytest.raises(ValueError, match="不含 JSON"):
+            expert.reason(_task(), _pack(), _context())
 
     def test_self_check_rejects_fake_citation(self):
         """推理链引用了证据包中不存在的 evidence_id → 自检失败。"""
@@ -312,3 +316,106 @@ class TestGatePipeline:
         assert result.allowed is False
         assert result.blocking_gate == "gate:output"
         assert "penicillin" in result.final_verdict.blocked_drugs
+
+
+# ---------------------------------------------------------------------------
+# 记忆专家（M5）：上下文装配
+# ---------------------------------------------------------------------------
+class TestMemoryExpert:
+    """provenance 分类 + 装配召回窗口（患者事实不被知识库条目挤占）。"""
+
+    @staticmethod
+    def _stack_service():
+        from harness_agent.retrieval.bm25 import BM25SparseRetriever
+        from harness_agent.retrieval.embeddings import HashingEmbeddingProvider
+        from harness_agent.retrieval.fusion import IdentityReranker
+        from harness_agent.retrieval.service import HybridRetrievalService
+        from harness_agent.retrieval.vector_store import InMemoryVectorStore
+        from harness_agent.safety import build_safety_stack
+
+        safety = build_safety_stack()
+        return HybridRetrievalService(
+            embedding_provider=HashingEmbeddingProvider(),
+            vector_store=InMemoryVectorStore(),
+            sparse=BM25SparseRetriever(),
+            reranker=IdentityReranker(),
+            input_gate=safety.input_gate,
+            assembly_gate=safety.assembly_gate,
+            resolver=safety.resolver,
+        )
+
+    def test_low_ranked_patient_memory_still_assembled(self):
+        """患者记忆名次低于知识库条目（默认窗口会被挤占）仍进入装配。
+
+        装配窗口下限（12）保证患者分区条目有机会进入分类阶段——
+        否则"复诊免重复问询"在知识库条目较多时静默失效。
+        """
+        from harness_agent.contracts.retrieval import RetrievalQuery, StoredChunk
+        from harness_agent.experts.memory_expert import MemoryExpertImpl
+
+        service = self._stack_service()
+        # 10 条知识库条目与查询词面强匹配（占据融合头部），患者记忆垫底
+        service.index(
+            [StoredChunk(chunk_id=f"kb-{i}", content=f"高血压治疗方案说明 {i}") for i in range(10)]
+            + [
+                StoredChunk(
+                    chunk_id="mem-s",
+                    patient_id=PAT,
+                    content="高血压病史 5 年",
+                    metadata={"provenance": "doctor_verified"},
+                ),
+                StoredChunk(
+                    chunk_id="mem-v",
+                    patient_id=PAT,
+                    content="近期服用氨氯地平 5mg qd",
+                    metadata={"provenance": "model_inference"},
+                ),
+            ]
+        )
+        expert = MemoryExpertImpl(retrieval=service)
+        bundle = expert.assemble(
+            RetrievalQuery(text="高血压治疗方案", patient_id=PAT, session_id="sess-1"),
+            SessionContext(patient_id=PAT),
+        )
+        assert "高血压病史 5 年" in bundle.stable_facts
+        assert "近期服用氨氯地平 5mg qd" in bundle.volatile_facts
+
+    def test_knowledge_base_evidence_excluded_from_facts(self):
+        """知识库条目（provenance=knowledge_base）不进入患者事实。"""
+        from harness_agent.contracts.retrieval import RetrievalQuery, StoredChunk
+        from harness_agent.experts.memory_expert import MemoryExpertImpl
+
+        service = self._stack_service()
+        service.index(
+            [
+                StoredChunk(chunk_id="kb-1", content="高血压治疗方案标准流程"),
+                StoredChunk(
+                    chunk_id="mem-s",
+                    patient_id=PAT,
+                    content="高血压病史 5 年",
+                    metadata={"provenance": "doctor_verified"},
+                ),
+            ]
+        )
+        expert = MemoryExpertImpl(retrieval=service)
+        bundle = expert.assemble(
+            RetrievalQuery(text="高血压治疗方案", patient_id=PAT, session_id="sess-1"),
+            SessionContext(patient_id=PAT),
+        )
+        # 知识库条目即使名次更高，也不冒充患者事实
+        assert "高血压治疗方案标准流程" not in bundle.stable_facts
+        assert "高血压治疗方案标准流程" not in bundle.volatile_facts
+
+    def test_allergies_from_hard_rules_not_retrieval(self):
+        """过敏史来自硬规则精确匹配（pat-001 青霉素过敏种子），非向量召回。"""
+        from harness_agent.contracts.retrieval import RetrievalQuery
+        from harness_agent.experts.memory_expert import MemoryExpertImpl
+
+        service = self._stack_service()
+        expert = MemoryExpertImpl(retrieval=service)
+        bundle = expert.assemble(
+            RetrievalQuery(text="任何查询", patient_id="pat-001", session_id="sess-1"),
+            SessionContext(patient_id="pat-001"),
+        )
+        assert bundle.allergies  # 种子安全栈：pat-001 青霉素过敏
+        assert any(r.normalized_drug == "penicillin" for r in bundle.allergies)

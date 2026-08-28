@@ -27,7 +27,6 @@ from langgraph.graph import END, START, StateGraph
 
 from harness_agent.contracts.experts import (
     ContextBundle,
-    Expert,
     ExpertTask,
     MemoryExpert,
     ReasoningExpert,
@@ -140,7 +139,11 @@ class HarnessOrchestrator:
         return builder.compile()
 
     def _branch_after_plan(self, state: OrchestrationState) -> str:
-        route = state["route_record"]
+        if state.get("escalation") is not None:
+            return "escalate"
+        route = state.get("route_record")
+        if route is None:
+            return "escalate"
         if route.decision == "need_reasoning":
             return "need_reasoning"
         if route.decision == "no_reasoning":
@@ -150,15 +153,33 @@ class HarnessOrchestrator:
     # ---- 节点实现 ----
 
     def _route_node(self, state: OrchestrationState) -> dict[str, Any]:
-        record = self._router.route(state["user_input"], state["context"])
+        """路由节点异常（在线 API 401/超时等）→ fail-closed 升级，不裸抛。"""
+        try:
+            record = self._router.route(state["user_input"], state["context"])
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "route_record": RouteRecord(
+                    decision="escalate",
+                    by_rule=False,
+                    attempt=1,
+                    reason=f"路由器执行异常: {exc}",
+                ),
+                "escalation": EscalationRequest(
+                    reason=f"路由器执行异常: {exc}", clarification_question="", to_human=True
+                ),
+            }
         return {"route_record": record}
 
     def _plan_node(self, state: OrchestrationState) -> dict[str, Any]:
+        if state.get("escalation") is not None:
+            return {}  # 已升级：保留首个原因，跳过后续节点工作
         tasks = self._planner.plan(state["user_input"], state["route_record"], state["context"])
         return {"tasks": tasks}
 
     def _retrieve_node(self, state: OrchestrationState) -> dict[str, Any]:
         """检索供给（M3 门面）：查询进、证据包出（含三道闸门裁决）。"""
+        if state.get("escalation") is not None:
+            return {}  # 已升级：保留首个原因
         context = state["context"]
         try:
             pack = self._retrieval.retrieve(
@@ -185,6 +206,8 @@ class HarnessOrchestrator:
         - 推理专家自检失败（引用虚假/因果倒置/依据不足）→ 抛异常，
           编排层捕获后 fail-closed 升级（不产出结论）。
         """
+        if state.get("escalation") is not None:
+            return {}  # 已升级：保留首个原因
         pack: EvidencePack | None = state.get("evidence_pack")
         if pack is None or not pack.is_reviewed:
             reason = "证据包未通过装配复核（is_reviewed=False）"
@@ -227,7 +250,10 @@ class HarnessOrchestrator:
 
         无门禁流水线时（``gate_pipeline=None``，M4 demo 场景）直接放行。
         拦截时结论被撤回——``finalize`` 只看到 escalation，不看到 conclusion。
+        门禁自身异常（在线 API 故障）同样 fail-closed 升级，不裸抛。
         """
+        if state.get("escalation") is not None:
+            return {}  # 已升级：保留首个原因
         if self._gate_pipeline is None:
             return {}
 
@@ -237,7 +263,16 @@ class HarnessOrchestrator:
         if conclusion is None or pack is None:
             return {}
 
-        result = self._gate_pipeline.run(conclusion, pack, state["context"])
+        try:
+            result = self._gate_pipeline.run(conclusion, pack, state["context"])
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "escalation": EscalationRequest(
+                    reason=f"门禁流水线执行异常: {exc}",
+                    clarification_question="",
+                    to_human=True,
+                )
+            }
         if not result.allowed:
             # interrupt：拦截即转人工，结论被门禁撤回
             return {
@@ -253,6 +288,8 @@ class HarnessOrchestrator:
 
     def _memory_node(self, state: OrchestrationState) -> dict[str, Any]:
         """委派记忆专家：装配上下文（复诊免重复问询主路径）。"""
+        if state.get("escalation") is not None:
+            return {}  # 已升级：保留首个原因
         task = next((t for t in state.get("tasks", []) if self._is_kind(t, "memory")), None)
         if task is None:
             return {
@@ -268,18 +305,32 @@ class HarnessOrchestrator:
                 )
             }
         context = state["context"]
-        bundle = expert.assemble(
-            RetrievalQuery(
-                text=state["user_input"],
-                patient_id=context.patient_id,
-                session_id=context.session_id,
-            ),
-            context,
-        )
+        try:
+            bundle = expert.assemble(
+                RetrievalQuery(
+                    text=state["user_input"],
+                    patient_id=context.patient_id,
+                    session_id=context.session_id,
+                ),
+                context,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "escalation": EscalationRequest(
+                    reason=f"记忆专家执行异常: {exc}", clarification_question="", to_human=True
+                )
+            }
         return {"context_bundle": bundle}
 
     def _escalate_node(self, state: OrchestrationState) -> dict[str, Any]:
-        """路由失败：产出升级请求（转澄清 / 人工），绝不回退为主 Agent 应答。"""
+        """路由失败：产出升级请求（转澄清 / 人工），绝不回退为主 Agent 应答。
+
+        已有升级请求（前序节点异常写入）保持 first-writer 语义不覆盖；
+        路由二次兜底仍失败（attempt=2）说明 LLM 无法可靠二分，转人工。
+        """
+        existing = state.get("escalation")
+        if existing is not None:
+            return {}
         route = state["route_record"]
         return {
             "escalation": EscalationRequest(
@@ -288,7 +339,7 @@ class HarnessOrchestrator:
                     "为了准确安排处理，能补充说明您的具体问题吗？"
                     "（例如：是想咨询用药，还是查询既往记录？）"
                 ),
-                to_human=False,
+                to_human=route.attempt >= 2,
             )
         }
 
@@ -321,6 +372,3 @@ class HarnessOrchestrator:
         except KeyError:
             return False
         return spec.kind == kind
-
-    def _expert_or_none(self, name: str) -> Expert | None:
-        return self._experts.get(name)

@@ -48,8 +48,16 @@ class TestMockLLMClient:
         assert llm.complete([]).text == "b"
         assert llm.complete([]).text == "b"  # 耗尽后重复最后一个
 
-    def test_empty_script_returns_empty_text(self):
-        assert MockLLMClient(role="router").complete([]).text == ""
+    def test_empty_script_returns_role_default(self):
+        """空脚本 → 角色默认合法应答（judge/router 有默认 JSON，见 mock 模块）。"""
+        import json
+
+        router_text = MockLLMClient(role="router").complete([]).text
+        assert json.loads(router_text)["decision"] == "need_reasoning"
+        judge_text = MockLLMClient(role="judge").complete([]).text
+        assert json.loads(judge_text)["faithfulness"] >= 0.7
+        # 无消息上下文时 reasoning 无证据 ID 可引用 → 空文本（调用方按解析失败处理）
+        assert MockLLMClient(role="reasoning").complete([]).text == ""
 
     def test_calls_recorded(self):
         llm = MockLLMClient(role="router", script=["ok"])

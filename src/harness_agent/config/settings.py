@@ -22,7 +22,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from harness_agent.config.paths import anchor_path, env_file_candidates
@@ -41,26 +41,7 @@ __all__ = [
 ]
 
 
-class _EmptyMeansUnsetModel(BaseModel):
-    """环境变量空字符串视为「未填写」（回落字段默认值）。
-
-    ``.env`` 模板预置了大量「留空 = 用默认值」的可选行（如
-    ``HARNESS_LLM__REASONING_BASE_URL=``、``HARNESS_LLM__PROVIDER=``）。
-    pydantic 默认把空字符串当作显式赋值参与校验，Literal / float
-    字段会直接抛 ValidationError——用户只是没填可选项就崩，违背
-    「留空即降级」的既定语义。这里在模型解析前统一丢弃空值，
-    让空行等价于注释掉该行。
-    """
-
-    @model_validator(mode="before")
-    @classmethod
-    def _drop_empty_values(cls, data: object) -> object:
-        if isinstance(data, dict):
-            return {key: value for key, value in data.items() if value != ""}
-        return data
-
-
-class AppSettings(_EmptyMeansUnsetModel):
+class AppSettings(BaseModel):
     """应用级全局设置。"""
 
     debug: bool = False
@@ -71,7 +52,7 @@ class AppSettings(_EmptyMeansUnsetModel):
     seed_sample_data: bool = True
 
 
-class LLMSettings(_EmptyMeansUnsetModel):
+class LLMSettings(BaseModel):
     """外部模型连接配置。
 
     **在线调用模式（推荐起步）**：``provider`` 填预设服务商名
@@ -135,7 +116,7 @@ class LLMSettings(_EmptyMeansUnsetModel):
     router_timeout_s: float = 15.0
 
 
-class RetrievalSettings(_EmptyMeansUnsetModel):
+class RetrievalSettings(BaseModel):
     """检索与记忆供给层设置。"""
 
     # local：本地 numpy 向量 + BM25（零 Docker）；milvus：docker-compose 启动
@@ -160,7 +141,7 @@ class RetrievalSettings(_EmptyMeansUnsetModel):
     rerank_top_k: int = 5
 
 
-class VfsSettings(_EmptyMeansUnsetModel):
+class VfsSettings(BaseModel):
     """虚拟文件系统与上下文压缩设置。"""
 
     # 虚拟目录根：<root_dir>/<session_id>/{evidence,reasoning,summaries,memories}
@@ -171,7 +152,7 @@ class VfsSettings(_EmptyMeansUnsetModel):
     memory_review_required: bool = True
 
 
-class SandboxSettings(_EmptyMeansUnsetModel):
+class SandboxSettings(BaseModel):
     """代码执行沙箱设置（检验计算、剂量换算等）。"""
 
     # mock：本地子进程隔离；opensandbox：Docker/K8s 双运行时 + 原生 MCP
@@ -182,7 +163,7 @@ class SandboxSettings(_EmptyMeansUnsetModel):
     checkpoint_every_turns: int = 5
 
 
-class SafetySettings(_EmptyMeansUnsetModel):
+class SafetySettings(BaseModel):
     """硬规则安全层设置（M2）。"""
 
     # 生产药名词典 JSON 路径（归一化名/别名/ATC/交叉反应组）。
@@ -190,7 +171,7 @@ class SafetySettings(_EmptyMeansUnsetModel):
     dictionary_path: str = ""
 
 
-class OrchestratorSettings(_EmptyMeansUnsetModel):
+class OrchestratorSettings(BaseModel):
     """主 Agent 编排层设置（M4）。
 
     - ``experts_config_path``：专家声明式 YAML（留空 = 仓库根
@@ -201,7 +182,7 @@ class OrchestratorSettings(_EmptyMeansUnsetModel):
     experts_config_path: str = ""
 
 
-class ObservabilitySettings(_EmptyMeansUnsetModel):
+class ObservabilitySettings(BaseModel):
     """可观测与审计设置。全部留空时自动降级：Noop tracer / SQLite / 内存实现。"""
 
     # Langfuse（留空 -> NoopTracer，仅打印事件）
@@ -214,7 +195,7 @@ class ObservabilitySettings(_EmptyMeansUnsetModel):
     redis_url: str = ""
 
 
-class Settings(_EmptyMeansUnsetModel, BaseSettings):
+class Settings(BaseSettings):
     """harness-medical-agent 全局配置聚合根。
 
     用法：``from harness_agent.config import get_settings``（进程内单例）。
@@ -253,7 +234,7 @@ def get_settings() -> Settings:
 
     ``_env_file`` 显式传入候选链（调用时动态解析）：
     仓库根 ``.env`` 打底 + CWD ``.env`` 覆盖——从任意目录运行
-    （如直接 ``python src/harness_agent/main.py``、父目录调用）都能
+    （如直接 ``python src/harness_agent/cli.py``、父目录调用）都能
     读到项目配置，修复"父目录运行 → 意外 mock 模式"。
     """
     return Settings(_env_file=env_file_candidates())

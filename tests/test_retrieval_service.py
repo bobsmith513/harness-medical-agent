@@ -302,6 +302,39 @@ class TestSiblingCompletion:
         assert all(not e.is_structural_completion for e in pack.evidence)
 
 
+class TestRecallDepthFloor:
+    """召回深度下限回归：query.top_k 大于配置深度时不得截断目标条目。
+
+    背景：患者记忆与共享知识库竞争固定名次。若双路召回深度恒为
+    配置值（8），排在深度之外的患者记忆永远进不了融合窗口——
+    深度下限应取 ``max(配置深度, query.top_k)``。
+    """
+
+    def test_top_k_beyond_configured_depth_still_recalls(self):
+        """top_k=12 > 配置深度 8：第 9-12 名候选仍可被召回。"""
+        service = _service()
+        # 10 条知识库条目共享查询词面（占据融合头部），1 条患者记忆垫底
+        service.index(
+            [_chunk(f"高血压治疗方案说明 {i}", f"kb-{i}") for i in range(10)]
+            + [_chunk("血型 O 型", "mem-1", patient_id=PAT_CLEAN)]
+        )
+        pack = service.retrieve(_query("高血压治疗方案", PAT_CLEAN, top_k=12))
+        ids = [e.source.chunk_id for e in pack.evidence]
+        # 垫底的患者记忆没有被固定深度窗口截断
+        assert "mem-1" in ids
+
+    def test_default_top_k_unaffected_by_floor(self):
+        """top_k=5 ≤ 配置深度：行为与旧实现一致（下限不放大窗口）。"""
+        service = _service()
+        service.index(
+            [_chunk(f"高血压治疗方案说明 {i}", f"kb-{i}") for i in range(10)]
+            + [_chunk("血型 O 型", "mem-1", patient_id=PAT_CLEAN)]
+        )
+        pack = service.retrieve(_query("高血压治疗方案", PAT_CLEAN, top_k=5))
+        assert len(pack.evidence) == 5
+        assert "mem-1" not in [e.source.chunk_id for e in pack.evidence]
+
+
 class TestEdgeCases:
     def test_empty_store_returns_allowed_empty_pack(self):
         """无召回：诚实空包（裁决=无需过滤），供推理专家如实回应无证据。"""

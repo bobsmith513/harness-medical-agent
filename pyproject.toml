@@ -39,6 +39,7 @@ bge = [
     "torch>=2.2",
 ]
 # milvus：向量存储切换 store=milvus（服务端用 docker-compose.milvus.yaml 启动）
+# uv.lock 当前锁 pymilvus 3.0.1（>=2.4 范围内；3.x 协议兼容，锁文件为准）
 milvus = [
     "pymilvus>=2.4",
 ]
@@ -57,7 +58,7 @@ all = [
 
 [project.scripts]
 # 在线问诊统一入口（整个项目的 main 函数）：uv run harness-online
-harness-online = "harness_agent.main:main"
+harness-online = "harness_agent.cli:main"
 # 检索供给 MCP server（stdio 传输）：uv run harness-mcp-retrieval
 harness-mcp-retrieval = "harness_agent.mcp.retrieval:main"
 
@@ -108,3 +109,7 @@ filterwarnings = ["error"]
 [tool.coverage.run]
 source = ["src/harness_agent"]
 branch = true
+
+[tool.coverage.report]
+# 覆盖率门禁：低于阈值 CI 失败（实测约 84%，留 4 个点余量防环境抖动）
+fail_under = 80

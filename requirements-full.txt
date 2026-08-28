@@ -31,5 +31,5 @@ pymilvus>=2.4                  # Milvus 客户端
 # 启动方式：uv run harness-mcp-retrieval（stdio 传输）
 fastmcp>=2.3                   # MCP server 封装
 
-# ---- 间接依赖（bge 栈随 sentence-transformers/torch 拉取，显式声明便于审计）----
-numpy>=1.26                    # sentence-transformers / torch 的间接依赖
+# ---- 间接依赖（显式声明，避免隐式拉取）----
+numpy>=1.26                    # 本地向量存储与 BM25 计算

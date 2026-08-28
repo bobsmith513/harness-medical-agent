@@ -131,14 +131,17 @@ class HybridRetrievalService:
             )
 
         # 2. 双路召回（分区隔离由两路存储实现强制）
+        #    召回深度下限 = 请求的最终 top_k：每路至少要召回这么多候选，
+        #    否则 query.top_k 大于配置深度时，排在深度之外的患者记忆
+        #    （与共享知识库竞争名次）永远进不了融合窗口。
         embedding = self._embedding_provider.embed([query.text])[0]
-        dense = self._vector_store.search(query, embedding, self._dense_top_k)
-        sparse = self._sparse.search(query, self._sparse_top_k)
+        dense_depth = max(self._dense_top_k, query.top_k)
+        sparse_depth = max(self._sparse_top_k, query.top_k)
+        dense = self._vector_store.search(query, embedding, dense_depth)
+        sparse = self._sparse.search(query, sparse_depth)
 
-        # 3. RRF 融合（窗口 = 召回深度上限，控制精排输入规模）
-        fused = rrf_fuse(
-            dense, sparse, k=self._rrf_k, top_k=max(self._dense_top_k, self._sparse_top_k)
-        )
+        # 3. RRF 融合（窗口 = 双路召回深度的较大值，控制精排输入规模）
+        fused = rrf_fuse(dense, sparse, k=self._rrf_k, top_k=max(dense_depth, sparse_depth))
 
         # 4. 精排（identity 默认直接截断；分数语义为最终融合分）
         final_k = max(query.top_k, 0)

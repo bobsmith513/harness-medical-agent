@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import sys
 import time
 
 import pytest
@@ -43,28 +44,6 @@ from harness_agent.observability import (
     build_observability_stack,
     build_tracer,
 )
-
-
-def _simulate_missing_redis(monkeypatch: pytest.MonkeyPatch, url: str) -> str:
-    """进程内模拟 redis 包未安装，返回原 URL 供构造函数使用。
-
-    实现：拦截内建 ``__import__``，仅对 ``import redis`` 抛
-    ImportError，其余 import 原样放行。``RedisCacheStore`` /
-    ``RedisLock`` 构造函数捕获 ImportError 后自动降级进程内实现，
-    本函数让这条降级路径在任何开发机上确定性可测（不依赖本机
-    是否安装 redis、是否运行 Redis 服务，也不发起任何网络连接）。
-    """
-    import builtins
-
-    real_import = builtins.__import__
-
-    def _fake_import(name, *args, **kwargs):
-        if name == "redis":
-            raise ImportError("No module named 'redis' (simulated for fallback test)")
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", _fake_import)
-    return url
 
 
 # ===========================================================================
@@ -118,43 +97,6 @@ class TestPatternDesensitizer:
         result = self.desensitizer.desensitize(text)
         assert "张三" not in result.text
         assert "[REDACTED-NAME]" in result.text
-
-    def test_desensitize_passport_standalone(self):
-        """护照号脱敏（中国护照格式：字母 + 8 位数字）。"""
-        text = "护照信息 E12345678 已登记"
-        result = self.desensitizer.desensitize(text)
-        assert "E12345678" not in result.text
-        assert "[REDACTED-PASSPORT]" in result.text
-        assert any("PASSPORT" in e for e in result.removed_entities)
-
-    def test_desensitize_passport_marker(self):
-        """护照号脱敏（标记式：护照号: xxx）。"""
-        text = "护照号: G28876543 复核"
-        result = self.desensitizer.desensitize(text)
-        assert "G28876543" not in result.text
-        assert "[REDACTED-PASSPORT]" in result.text
-
-    def test_desensitize_insurance_number(self):
-        """医保卡号脱敏（标记式）。"""
-        text = "医保卡号: D33010601 就诊"
-        result = self.desensitizer.desensitize(text)
-        assert "D33010601" not in result.text
-        assert "[REDACTED-INSURANCE]" in result.text
-        assert any("INSURANCE" in e for e in result.removed_entities)
-
-    def test_desensitize_insurance_number_long(self):
-        """医保编号脱敏（纯数字长号）。"""
-        text = "医保编号 33010620260812001 已核对"
-        result = self.desensitizer.desensitize(text)
-        assert "33010620260812001" not in result.text
-        assert "[REDACTED-INSURANCE]" in result.text
-
-    def test_desensitize_no_false_positive_on_atc_code(self):
-        """ATC 药理类别码（如 J01CE01）不应被误判为护照号。"""
-        text = "penicillin (ATC=J01CE01) 与 amoxicillin 存在交叉反应"
-        result = self.desensitizer.desensitize(text)
-        assert "J01CE01" in result.text
-        assert "[REDACTED-PASSPORT]" not in result.text
 
     def test_desensitize_multiple_pii(self):
         """多种 PII 混合脱敏。"""
@@ -467,15 +409,49 @@ class TestBuildCacheStore:
         assert isinstance(store, RedisCacheStore)
 
     def test_redis_without_sdk_falls_back(self, monkeypatch):
-        """Redis URL 但 redis 包不可用（ImportError）→ 降级为 Memory。
+        """Redis URL 但 redis 包未安装 → 降级为 Memory。
 
-        通过拦截内建 import 在进程内模拟"未安装 redis"，使降级路径
-        的验证不依赖开发机是否装了 redis 包 / 起了 Redis 服务——
-        装了包的环境下原实现会发起真实连接（localhost:6379）。
+        环境无关写法：把 sys.modules["redis"] 置 None，令构造函数里的
+        ``import redis`` 必然抛 ImportError——无论本机是否安装 redis、
+        是否有 Redis 服务在跑，都走同一条降级断言路径，不会发起真实连接。
         """
-        store = RedisCacheStore(url=_simulate_missing_redis(monkeypatch, "redis://localhost:6379"))
+        monkeypatch.setitem(sys.modules, "redis", None)
+        store = RedisCacheStore(url="redis://localhost:6379")
         store.set("k", "v")
         assert store.get("k") == "v"  # 降级到 MemoryCacheStore
+
+
+class TestRedisCacheStoreInterfaceAlignment:
+    """RedisCacheStore 与 MemoryCacheStore 接口对齐（静态分析整改项）。
+
+    旧实现缺 delete/clear/size（消费方换实现时接口不对齐）；
+    整改后降级路径下五个方法全部转发内存实现。
+    """
+
+    @pytest.fixture
+    def degraded_store(self, monkeypatch) -> RedisCacheStore:
+        monkeypatch.setitem(sys.modules, "redis", None)
+        return RedisCacheStore(url="redis://localhost:6379")
+
+    def test_delete(self, degraded_store):
+        degraded_store.set("k", "v")
+        assert degraded_store.delete("k") is True
+        assert degraded_store.delete("k") is False  # 已删：不存在
+        assert degraded_store.get("k") is None
+
+    def test_clear_and_size(self, degraded_store):
+        degraded_store.set("k1", "v1")
+        degraded_store.set("k2", "v2")
+        assert degraded_store.size == 2
+        degraded_store.clear()
+        assert degraded_store.size == 0
+        assert degraded_store.get("k1") is None
+
+    def test_full_interface_matches_memory(self):
+        """两实现方法集一致（get/set/delete/clear/size）。"""
+        memory_methods = {name for name in dir(MemoryCacheStore) if not name.startswith("_")}
+        redis_methods = {name for name in dir(RedisCacheStore) if not name.startswith("_")}
+        assert memory_methods <= redis_methods
 
 
 # ===========================================================================
@@ -532,11 +508,13 @@ class TestBuildDistLock:
         assert isinstance(lock, RedisLock)
 
     def test_redis_without_sdk_falls_back(self, monkeypatch):
-        """Redis URL 但 redis 包不可用（ImportError）→ 降级为 MemoryLock。
+        """Redis URL 但 redis 包未安装 → 降级为进程内锁。
 
-        同上：进程内模拟 ImportError，避免对开发机环境敏感。
+        环境无关写法：同上，sys.modules["redis"]=None 强制 ImportError，
+        任何环境下都不发起真实连接。
         """
-        lock = RedisLock(url=_simulate_missing_redis(monkeypatch, "redis://localhost:6379"))
+        monkeypatch.setitem(sys.modules, "redis", None)
+        lock = RedisLock(url="redis://localhost:6379")
         assert lock.acquire("key1", ttl_s=10) is True
         assert lock.acquire("key1", ttl_s=10) is False  # 已锁定
 

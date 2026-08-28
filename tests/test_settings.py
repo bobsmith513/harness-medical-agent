@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -27,48 +26,6 @@ def clean_env(tmp_path: os.PathLike[str], monkeypatch: pytest.MonkeyPatch):
     reset_settings()
     yield
     reset_settings()
-
-
-class TestEmptyEnvValueFallback:
-    """.env 可选行留空（空字符串）必须等价于未填写，而非校验报错。
-
-    .env 模板预置大量 ``KEY=`` 空行；pydantic 原生行为会把空串当
-    显式赋值，Literal / float 字段直接 ValidationError。设置层统一
-    在解析前丢弃空值（见 settings._EmptyMeansUnsetModel）。
-    """
-
-    def test_blank_provider_falls_back_to_mock(self, clean_env):
-        env_file = Path(os.getcwd()) / ".env"
-        env_file.write_text("HARNESS_LLM__PROVIDER=\n", encoding="utf-8")
-        settings = Settings(_env_file=str(env_file))
-        assert settings.llm.provider == "mock"
-
-    def test_blank_optional_lines_do_not_crash(self, clean_env):
-        """模板常见形态：可选行全部留空，配置仍可整体加载。"""
-        env_file = Path(os.getcwd()) / ".env"
-        env_file.write_text(
-            "HARNESS_LLM__PROVIDER=\n"
-            "HARNESS_LLM__API_KEY=\n"
-            "HARNESS_LLM__REASONING_BASE_URL=\n"
-            "HARNESS_LLM__REASONING_TIMEOUT_S=\n"
-            "HARNESS_RETRIEVAL__MILVUS_URI=\n",
-            encoding="utf-8",
-        )
-        settings = Settings(_env_file=str(env_file))
-        assert settings.llm.provider == "mock"
-        assert settings.llm.reasoning_timeout_s == 120.0
-        assert settings.retrieval.milvus_uri == ""
-
-    def test_nonempty_value_still_overrides(self, clean_env):
-        """空值回落默认，非空值正常生效——两者不互相干扰。"""
-        env_file = Path(os.getcwd()) / ".env"
-        env_file.write_text(
-            "HARNESS_LLM__PROVIDER=\nHARNESS_LLM__REASONING_TIMEOUT_S=60\n",
-            encoding="utf-8",
-        )
-        settings = Settings(_env_file=str(env_file))
-        assert settings.llm.provider == "mock"
-        assert settings.llm.reasoning_timeout_s == 60.0
 
 
 class TestZeroDependencyDefaults:

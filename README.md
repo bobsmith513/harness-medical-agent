@@ -3,10 +3,11 @@
 > Harness Engineering 范式的医疗多智能体系统：把工程脚手架做厚，而非换更强的模型。
 
 [![CI](https://github.com/bobsmith513/harness-medical-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/bobsmith513/harness-medical-agent/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://github.com/bobsmith513/harness-medical-agent)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-496%20passed-brightgreen)
 ![Status](https://img.shields.io/badge/status-M8%E5%B7%B2%E5%AE%8C%E6%88%90-success)
+
+> 测试现状：**581 个用例**，零依赖 mock 环境全绿（可本地 `uv run pytest` 复跑）；`--all-extras` CI 环境为 577 通过 + 4 跳过（CI 全绿见顶部徽章，跳过原因见[测试体系](#测试体系在测什么不测什么)）。
 
 **导航**：[快速开始](#快速开始) · [在线调用模式](#在线调用模式填两行-env-即可运行) · [测试体系](#测试体系在测什么不测什么) · [白盒日志走读](#白盒日志全链路走读) · [配置详情](#配置详情) · [项目结构](#项目结构)
 
@@ -22,140 +23,85 @@
 
 ## 系统架构图
 
-以下架构图由代码倒推生成，每个节点对应 `src/harness_agent/` 下的真实模块：
+以下架构图由代码倒推生成，每个节点对应 `src/harness_agent/` 下的真实模块。
+**诚实标注约定**：括号内标注为该节点的零依赖默认形态——与「从 Mock 到生产」
+一节的降级表口径一致，未标注的节点在 mock 模式下即为完整实现：
 
 ```mermaid
-%%{init: {
-  'theme': 'base',
-  'themeVariables': {
-    'background': '#ffffff',
-    'primaryColor': '#f0f7ff',
-    'primaryBorderColor': '#2563eb',
-    'primaryTextColor': '#1e293b',
-    'lineColor': '#475569',
-    'secondaryColor': '#f5f3ff',
-    'tertiaryColor': '#ecfdf5',
-    'fontSize': '13px',
-    'fontFamily': 'system-ui, -apple-system, sans-serif',
-    'nodeBorder': '1.5px',
-    'nodeBorderRadius': '10px',
-    'clusterBkg': '#f8fafc',
-    'clusterBorder': '#cbd5e1'
-  }
-}}%%
-
 graph TB
-    %% ==================== 样式定义 ====================
-    classDef entry fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e3a5f,font-weight:600,r:10
-    classDef orch fill:#ede9fe,stroke:#7c3aed,stroke-width:1.5px,color:#2e1065,font-weight:600,r:10
-    classDef expert fill:#d1fae5,stroke:#059669,stroke-width:1.5px,color:#064e3b,font-weight:600,r:10
-    classDef supply fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f,font-weight:600,r:10
-    classDef quality fill:#fee2e2,stroke:#dc2626,stroke-width:1.5px,color:#7f1d1d,font-weight:600,r:10
-    classDef infra fill:#f1f5f9,stroke:#64748b,stroke-width:1.5px,color:#1e293b,font-weight:500,r:10
-    classDef gate fill:#fef9c3,stroke:#ca8a04,stroke-width:1.2px,color:#713f12,r:8
-
-    %% ==================== 入口层 ====================
-    subgraph entry["🛬 入口层"]
-        DES["<b>PatternDesensitizer</b><br/>脱敏中间件<br/>身份证 · 手机 · 邮箱 · 护照 · 医保 · 患者ID"]
+    subgraph entry ["入口层"]
+        DES["PatternDesensitizer<br/>脱敏中间件：身份证/手机/邮箱/患者ID"]
     end
 
-    %% ==================== 编排层 ====================
-    subgraph orch["🧠 编排层 — LangGraph StateGraph"]
-        ROUTE["<b>BinaryRouter</b><br/>规则前置 → LLM 兜底 → 二次路由<br/><i>LLM 不得自报 escalate</i>"]
-        PLAN["<b>TaskPlanner</b><br/>路由裁决 → 委派序列"]
-        SG["<b>StateGraph</b><br/>route → plan → {retrieve│reason│memory│escalate} → finalize<br/><i>结构层面禁止产出临床结论</i>"]
+    subgraph orch ["编排层 — langgraph StateGraph"]
+        ROUTE["BinaryRouter<br/>规则前置 → LLM 兜底 → 二次路由"]
+        PLAN["TaskPlanner<br/>路由裁决 → 委派序列"]
+        SG["StateGraph<br/>route→plan→{retrieve→reason→gates | memory | escalate}→finalize"]
     end
 
-    %% ==================== 专家层 ====================
-    subgraph experts["🧑‍⚕️ 专家层"]
-        RE["<b>ReasoningExpertImpl</b><br/>三段式推理链 + 自检 3/3"]
-        ME["<b>MemoryExpertImpl</b><br/>硬规则匹配 + ATC交叉反应<br/>上下文装配 + 免重复问询"]
+    subgraph experts ["专家层"]
+        RE["ReasoningExpertImpl<br/>三段式推理链 + 自检 3/3"]
+        ME["MemoryExpertImpl<br/>上下文装配 + 免重复问询"]
     end
 
-    %% ==================== 供给层 ====================
-    subgraph supply["📚 供给层 — HybridRetrievalService"]
-        IG["<b>输入闸门</b><br/>过敏硬规则前置拦截"]
-        DR["<b>稠密路</b><br/>BGE / HNSW"]
-        SR["<b>稀疏路</b><br/>BM25"]
-        RRF["<b>RRF 融合</b>"]
-        RK["<b>精排</b><br/>bge-reranker"]
-        AG["<b>装配闸门</b><br/>过滤含过敏药物证据 + sibling_ids 同父补全"]
+    subgraph supply ["供给层 — HybridRetrievalService"]
+        IG["输入闸门<br/>过敏硬规则前置拦截"]
+        DR["稠密路 BGE/HNSW<br/>（零依赖默认为哈希嵌入，无语义能力）"]
+        SR["稀疏路 BM25"]
+        RRF["RRF 融合"]
+        RK["精排 bge-reranker<br/>（默认 identity 跳过精排）"]
+        AG["装配闸门<br/>过滤含过敏药物证据"]
     end
 
-    %% ==================== 质量层 ====================
-    subgraph quality["✅ 质量层 — GatePipeline"]
-        QG["<b>QualityJudge</b><br/>LLM-as-judge 忠实度 ≥ 0.70<br/><i>专查依据缺失与因果倒置</i>"]
-        OG["<b>OutputGate</b><br/>结论 + 推理链全文药物安全扫描"]
+    subgraph quality ["质量层 — GatePipeline"]
+        QG["QualityJudge<br/>LLM-as-judge 忠实度 >= 0.70"]
+        OG["OutputGate<br/>结论+推理链全文药物安全扫描"]
     end
 
-    %% ==================== 基础设施 ====================
-    subgraph infra["⚙️ 基础设施"]
-        VFS["<b>VfsDirectory</b><br/>/evidence/ /reasoning/ /summaries/ /memories/"]
-        CMP["<b>ContextCompactor</b><br/>保留最近 3 轮 + 文件指针"]
-        MRQ["<b>MemoryReviewQueue</b><br/>pending → approved / rejected"]
-        SBX["<b>SandboxRuntime</b><br/>Mock / OpenSandbox<br/><i>检查点保存/恢复</i>"]
-        TRC["<b>Tracer + AuditStore</b><br/>+ CacheStore + DistLock"]
+    subgraph infra ["基础设施"]
+        VFS["VfsDirectory<br/>/evidence/ /reasoning/ /summaries/ /memories/"]
+        CMP["ContextCompactor<br/>保留最近 3 轮 + 文件指针"]
+        MRQ["MemoryReviewQueue<br/>pending → approved/rejected"]
+        SBX["SandboxRuntime<br/>Mock（默认，本地子进程）/ OpenSandbox 骨架"]
+        TRC["Tracer + AuditStore + CacheStore + DistLock<br/>（默认 Noop/SQLite/内存，Langfuse/PostgreSQL/Redis 可插拔）"]
     end
 
-    %% ==================== 主流程连线 ====================
-    DES -->|"请求"| ROUTE
-
+    DES --> ROUTE
     ROUTE -->|"need_reasoning"| PLAN
     ROUTE -->|"no_reasoning"| ME
     ROUTE -->|"escalate"| SG
-
-    PLAN -->|"委派"| RE
-
+    PLAN --> RE
     RE -->|"证据包"| IG
     IG -->|"通过"| DR
-    IG -->|"拦截 → 空包"| SG
-
-    DR -->|"候选集"| RRF
-    SR -->|"候选集"| RRF
-    RRF -->|"融合"| RK
-    RK -->|"精排结果"| AG
-
+    IG -->|"拦截"| SG
+    DR --> RRF
+    SR --> RRF
+    RRF --> RK
+    RK --> AG
     AG -->|"is_reviewed=True"| RE
-    AG -->|"is_reviewed=False / 全过滤"| SG
-
-    RE -->|"推理结果"| QG
+    AG -->|"is_reviewed=False"| SG
+    RE --> QG
     QG -->|"pass"| OG
     QG -->|"拦截"| SG
-
     OG -->|"pass"| VFS
     OG -->|"拦截"| SG
-
-    ME -->|"稳定事实 → 直接响应<br/>易变事实 → 确认式追问"| VFS
-
-    VFS -->|"归档"| CMP
-    CMP -->|"待审核摘要"| MRQ
-    MRQ -->|"approved → 写入记忆索引"| DR
-
+    ME --> VFS
+    VFS --> CMP
+    CMP --> MRQ
+    MRQ -->|"approved"| DR
     TRC -.->|"全链路 trace"| SG
-    SBX -.->|"代码执行隔离"| SG
-
-    %% ==================== 样式应用 ====================
-    class DES entry
-    class ROUTE,PLAN,SG orch
-    class RE,ME expert
-    class IG,DR,SR,RRF,RK,AG supply
-    class QG,OG quality
-    class VFS,CMP,MRQ,SBX,TRC infra
-    class IG,AG gate
 ```
 
 ## 系统分层
 
-| 层 | 模块 | 职责 |
+| 层 | 模块 | 职责（零依赖默认形态 → 生产形态） |
 |----|------|------|
-| 入口层 | 会话管理 | 脱敏中间件前置 |
-| 编排层 | 主 Agent / 路由器 | 任务拆解与委派；二值路由"是否需要临床推理" |
-| 专家层 | 推理专家 / 记忆专家 | 推理链生成＋自检；供给编排 |
-| 供给层 | MCP 检索服务 | 混合检索＋安全闸门＋分区隔离 |
-| 质量层 | 质量门禁 | LLM-as-judge 忠实度＋药物安全 API 全量把关 |
-| 基础设施 | 沙箱 / 可观测 | OpenSandbox、Langfuse、PostgreSQL、Redis |
-
-完整构建路线见 [docs/development-plan.md](docs/development-plan.md)。
+| 入口层 | 会话管理 | 脱敏中间件前置（两种形态一致） |
+| 编排层 | 主 Agent / 路由器 | 任务拆解与委派；二值路由"是否需要临床推理"（两种形态一致） |
+| 专家层 | 推理专家 / 记忆专家 | 推理链生成＋自检；供给编排（两种形态一致） |
+| 供给层 | MCP 检索服务 | 混合检索＋安全闸门＋分区隔离（哈希嵌入/BM25 → BGE/Milvus） |
+| 质量层 | 质量门禁 | LLM-as-judge 忠实度＋药物安全 API 全量把关（两种形态一致） |
+| 基础设施 | 沙箱 / 可观测 | Mock 沙箱 / Noop tracer / SQLite / 内存 → OpenSandbox **骨架** / Langfuse / PostgreSQL / Redis |
 
 ## 快速开始
 
@@ -182,7 +128,7 @@ uv run harness-online                     # 控制台命令（等价 examples/ru
 项目提供四套 requirements 文件，按场景选择：
 
 ```bash
-# 场景一：演示 / CI（零外部服务，5 入口 demo + 496 项测试全跑通）
+# 场景一：演示 / CI（零外部服务，4 个端到端 demo + 5 个模块级 demo + 581 项测试全跑通）
 pip install -r requirements.txt && pip install -e .
 
 # 场景二：生产（接入 vLLM / 在线 API，.env 填 8 个字段）
@@ -218,7 +164,16 @@ uv run harness-online
 启动后自动装配 4 位虚构患者档案 + 8 条知识条目 + 过敏安全种子，
 交互循环：选患者 → 提问 → 白盒输出「路由 → 证据包 → 推理链 → 门禁 → 结论」。
 
+### 预设服务商（端点与模型名自动解析）
 
+| provider | 端点 | 推理模型 | judge / 路由模型 |
+|----------|------|---------|-----------------|
+| `deepseek` | api.deepseek.com/v1 | deepseek-v4-pro | deepseek-v4-flash |
+| `qwen` | 阿里云百炼兼容模式 | qwen3.8-max | qwen3.8-flash |
+| `zhipu` | 智谱开放平台 | glm-4.6 | glm-4.5-air |
+| `moonshot` | 月之暗面 Kimi | kimi-k2.6 | kimi-k2.5 |
+| `openai` | OpenAI 官方 | gpt-4o | gpt-4o-mini |
+| `siliconflow` | 硅基流动聚合 | DeepSeek-V3 | Qwen2.5-72B |
 
 ### 微调模型旁路（混合部署）
 
@@ -246,7 +201,7 @@ cp .env.example .env
 
 | 场景 | 需填字段 | 说明 |
 |------|---------|------|
-| 零依赖演示 | 无（默认 mock） | 496 项测试 + 5 入口 demo 全跑通 |
+| 零依赖演示 | 无（默认 mock） | 581 项测试 + 9 个 demo 全跑通 |
 | 在线调用 | `PROVIDER` + `API_KEY`（2 个） | 预设端点自动解析 |
 | 混合部署 | + `REASONING_BASE_URL` + `REASONING_MODEL` | 微调模型旁路 |
 | 自建端点 | 逐角色 `<ROLE>_BASE_URL` 等 | 通用 OpenAI 兼容协议 |
@@ -263,9 +218,15 @@ cp .env.example .env
 
 ## 白盒日志全链路走读
 
-以下三个 demo 均为 `uv run python examples/demo_*.py` 的**原样控制台输出**，编排链路（脱敏→路由→检索→推理→门禁→结论→trace）的中间数据全部来自程序真实运行。需要说明：**LLM 应答本身来自 `MockLLMClient` 的预设脚本**（离线零依赖模式，见[测试体系](#测试体系在测什么不测什么)）——即推理链内容是预置的标准答案，而非模型生成；把 `.env` 切到在线 API 后，链路与门禁逻辑完全不变，仅应答内容变为真实模型输出。展示的工程价值在编排与安全机制，而非模型能力。
+以下三个 demo 均为**真实运行日志**（`uv run python examples/demo_*.py` 原样输出）：
+编排、检索、门禁与全链路 trace 均为实际执行结果，中间数据非手写；其中 LLM 应答由
+`MockLLMClient` 按预设剧本提供——这是零依赖模式的定位（机制详见「测试体系」），
+真实模型的在线链路见[在线调用模式](#在线调用模式填两行-env-即可运行)。
 
-> 医疗提示：以下日志中的用药剂量仅为合成演示数据，不构成医疗建议。
+两点成色说明（避免误读）：零依赖 demo 中检索层使用**静态证据桩**
+（`examples/demo_first_diagnosis.py` 的 `_StaticRetrieval`，返回预置 `EvidencePack`），
+"忠实度 0.92" 等门禁数值为剧本预设值——demo 验证的是**编排与门禁的工程行为**
+（路由裁决、拦截链、trace 结构），不是检索与推理的应答质量。
 
 ### 例一：初诊推理全链路（7 步）
 
@@ -551,7 +512,10 @@ fail-closed 语义：拦截即 interrupt，绝不静默放行
 ```
 </details>
 
-## 端到端 Demo 总览
+## 运行入口与端到端 Demo 总览
+
+口径说明：**2 个运行入口**（交互式问诊 + 无 Key 在线链路验证）+ **4 个端到端 demo**
+（另有 5 个模块级 demo 见下节），共 11 个可运行入口。
 
 | Demo | 场景 | 关键验证 | 运行命令 |
 |------|------|---------|---------|
@@ -559,7 +523,7 @@ fail-closed 语义：拦截即 interrupt，绝不静默放行
 | `mock_openai_server.py` | 无 Key 验证在线链路 | 真 HTTP 服务模拟 OpenAI 协议，含网络层的全链路跑通 | `uv run python examples/mock_openai_server.py` |
 | `demo_first_diagnosis.py` | 初诊推理全链路 | 脱敏→路由→检索→推理→门禁→结论→trace（7 步） | `uv run python examples/demo_first_diagnosis.py` |
 | `demo_followup_memory.py` | 复诊记忆命中免问询 | 摘要→审核→转正→召回→编排验证（4 Phase） | `uv run python examples/demo_followup_memory.py` |
-| `demo_long_conversation.py` | 长会话压缩 | 20 轮压缩 81%、VFS 持久化、批量审核（5 Phase） | `uv run python examples/demo_long_conversation.py` |
+| `demo_long_conversation.py` | 长会话压缩 | 20 轮压缩 81%（demo 运行输出，非基准测试）、VFS 持久化、批量审核（5 Phase） | `uv run python examples/demo_long_conversation.py` |
 | `demo_gate_interception.py` | 门禁拦截转人工 | 忠实度/臆测/过敏药物 3 拦截 + 1 正常对照 | `uv run python examples/demo_gate_interception.py` |
 
 ## 模块级 Demo
@@ -574,7 +538,12 @@ uv run python examples/demo_m7_observability.py # M7: 脱敏 + 沙箱 + trace
 
 ## 测试体系：在测什么，不测什么
 
-测试共 496 项，全部可在零外部服务环境复现（`uv run pytest`）：基础依赖环境实测 **496 通过、0 跳过**；`uv sync --all-extras` 全量环境实测 **492 通过、4 跳过**（跳过原因见下节）。测试不依赖网络：外部服务以契约假件注入，Redis / BGE / Milvus 的"依赖缺失降级"路径在测试内模拟（如拦截 `import redis` 抛 ImportError），任何机器上结果一致。全绿证明的是工程行为正确——解析、降级、升级路径可控，与外部 API 是否可用、模型答得好不好无关。
+当前 **581 个用例**（27 个测试文件）：零依赖 mock 环境全部通过；`uv sync --all-extras`
+后的 CI 环境为 577 通过 + 4 跳过（跳过原因见下文），可本地 `uv run pytest -v` 复跑核对。
+全部测试在进程内完成：外部服务（LLM / Redis / 数据库）一律以契约假件或降级路径覆盖，
+不依赖任何真实端点——Redis 测试通过 monkeypatch 模拟 SDK 缺失，装了 redis 包的环境
+也不会发起真实连接。全绿证明的是工程行为正确——解析、降级、升级路径可控，
+与外部 API 是否可用、模型答得好不好无关。
 
 ### 依赖反转：测试怎么绕开外部服务
 
@@ -585,10 +554,12 @@ uv run python examples/demo_m7_observability.py # M7: 脱敏 + 沙箱 + trace
 | 类别 | 被测内容 | 代表文件 |
 |------|---------|---------|
 | 纯工程逻辑 | 不依赖模型的算法：药名归一化折叠（全角/别名）、RRF 融合数学、VFS 状态机 | `test_safety_normalization.py`（15 项） |
-| 安全对抗 | 过敏闸门对全角混淆、历史别名、交叉反应的漏检率必须为 0 | `test_safety_adversarial.py`（16 项） |
+| 安全对抗 | 过敏闸门对全角混淆、历史/品牌别名、交叉反应的**种子样本集**（30 条）漏检率必须为 0 | `test_safety_adversarial.py`（62 项） |
 | 容错路径 | LLM 输出不可控时的行为：垃圾应答 → 二次路由 → 仍失败 → escalate，断言调用次数恰好 2 次 | `test_orchestrator_router.py`（34 项） |
 | fail-closed 骨架 | 推理专家抛异常 → 结论不产出、转人工，绝不静默放行 | `test_orchestrator_agent.py`（15 项） |
 | 装配解析 | `.env` → 客户端配置的优先级规则（角色覆盖 > 共享 Key > provider 预设），只断言字段值 | `test_llm_online_wiring.py`（17 项） |
+| 解析健壮性 | LLM 输出 JSON 提取：嵌套对象、多段输出、字符串内花括号、围栏包裹（路由器与 judge 共用解析器） | `test_llm_json_parsing.py`（20 项） |
+| 端点容错 | OpenAI 兼容端点返回非 JSON / 缺字段 / 非文本 content 时的分类报错（MockTransport 离线注入） | `test_llm_response_protection.py`（13 项） |
 
 `test_llm_online_wiring.py` 名字带 "online"，实际验证的是配置解析优先级，从不调用 `complete()`。
 
@@ -598,7 +569,7 @@ uv run python examples/demo_m7_observability.py # M7: 脱敏 + 沙箱 + trace
 
 ### 跳过与运行
 
-全量 extras 环境下的 4 项跳过原因均为「依赖已安装」——它们验证依赖**缺失**时的降级路径（BGE 缺席走哈希嵌入、pymilvus 缺席走本地向量库、fastmcp 缺席走进程内直调），装了对应 extra 后无需重复验证。基础依赖环境下这 4 项会全部执行并通过。
+4 项跳过的原因均为「依赖已安装」——它们验证依赖**缺失**时的降级路径（BGE 缺席走哈希嵌入、pymilvus 缺席走本地向量库），装了对应 extra 后无需重复验证。
 
 ```bash
 uv run pytest -q                       # CI 口径：静默
@@ -634,7 +605,8 @@ HARNESS_SANDBOX__BACKEND=mock                                 # mock | opensandb
               → 质量门禁
                   （LLM-judge 忠实度校验 + 药物安全 API 校验）
                   ├─ 通过 → 临床结论输出
-                  └─ 未达标 → interrupt → 转人工（约 10%）
+                  └─ 未达标 → interrupt → 转人工
+                    （升级率未做统计——mock 剧本下的拦截频率由剧本决定，无生产数据支撑，不设指标）
 长会话伴随：证据/推理链/摘要 → 虚拟目录持久化 → 上下文只留最近 3 轮 + 文件指针
             → 摘要标注来源置信度 → 抽样审核 → 通过才写入 /memories/ 转正为可召回记忆
 ```
@@ -652,9 +624,9 @@ HARNESS_SANDBOX__BACKEND=mock                                 # mock | opensandb
 | 硬规则不向量化 | 过敏史 ATC 交叉反应 | 金融：黑名单实体精确匹配 |
 | 记忆审核闭环 | pending_review → approved/rejected | 客服：会话摘要审核后才入知识库 |
 | VFS 上下文压缩 | 保留最近 3 轮 + 文件指针 | 任意长会话场景通用 |
-| 脱敏中间件 | 身份证/手机/邮箱/护照/医保/患者ID | 任意 PII 场景：SSN/银行卡 |
+| 脱敏中间件 | 身份证/手机/邮箱/患者ID | 任意 PII 场景：SSN/护照/银行卡 |
 
-**复刻步骤**（约 2 小时从零到跑通）：
+**复刻步骤**（从零到跑通；实际耗时取决于领域词典规模与配置熟悉度，不做时间承诺）：
 
 1. 复制 `src/harness_agent/` 目录结构，替换领域模型（`models/`）
 2. 修改 `safety/` 中的硬规则词典（如从药物 ATC 改为金融实体黑名单）
@@ -694,12 +666,13 @@ src/harness_agent/
   observability/  # 可观测栈（Tracer + 脱敏 + 审计 + 缓存 + 锁）
   llm/            # LLM 客户端（Mock + OpenAI 兼容）
 tests/
-  fixtures/       # 合成数据（对抗样本 + 患者档案 + 知识条目）
+  fixtures/       # 合成数据（对抗样本种子集 30 条 + 患者档案 + 知识条目）
   factories.py    # 测试工厂（最小合法模型构造）
-  test_*.py       # 25 个文件，496 项（基础依赖环境全通过；全量 extras 环境 492 通过 + 4 跳过）
+  test_*.py       # 27 个文件，581 个用例（进程内完成，不依赖真实端点；CI 全绿见顶部徽章）
 examples/
   demo_*.py       # 端到端 + 模块级 demo
 requirements*.txt # 四套部署依赖（基础/生产/全量/开发）
+uv.lock           # 锁文件（根包 harness-agent，勿用其他环境的 lock 覆盖）
 ```
 
 ## 路线图
@@ -715,12 +688,16 @@ requirements*.txt # 四套部署依赖（基础/生产/全量/开发）
 | M6 | VFS 与记忆审核 | ✅ |
 | M7 | 沙箱与可观测 | ✅ |
 | M8 | 端到端演示与完整文档 | ✅ |
+| M9 | 发布 v0.1.0 | 本地就绪 |
 
-## 开发方式声明
+## 开发方式说明
 
-本项目采用 **AI 辅助开发（AI-assisted / vibe coding）** 的方式完成：架构分层、里程碑划分、安全语义（fail-closed、硬规则不向量化、记忆审核转正）与测试断言设计由作者主导，代码生成与迭代借助 AI 结对工具加速。作者理解并复核了每一层的实现与取舍——StateGraph 编排、BM25 的 k1/b 参数、RRF 融合、三道安全闸门、脱敏正则的规则排序——欢迎在代码评审或面试中逐模块深挖。README 中全部测试数字为真实运行结果，可用 `uv run pytest` 一键复现。
+本项目采用 **AI 辅助开发 + 人工设计决策与验证** 的方式完成：架构分层、fail-closed 语义、安全闸门取舍等设计决策由作者制定，代码实现与测试编写有 AI 工具深度参与，作者负责逐模块审读、运行验证并承担全部正确性责任。
 
-这也是 [docs/development-plan.md](docs/development-plan.md) 中"把工程脚手架做厚到只需换配置层就能落地新领域"的实证：AI 负责产量，工程负责边界。
+评估工作量与过程的正确路径不是看提交历史，而是看三份材料——
+[development-plan.md](docs/development-plan.md)（每个里程碑的设计取舍）、
+[design-decisions.md](docs/design-decisions.md)（关键实现参数的理由与数据口径）、
+以及 `tests/`（每项安全与降级语义的断言）。
 
 ## 合规声明
 

@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import re
+
 from harness_agent.contracts.retrieval import (
     Embedding,
     RetrievalQuery,
@@ -22,6 +24,22 @@ from harness_agent.contracts.retrieval import (
 )
 
 __all__ = ["InMemoryVectorStore", "MilvusVectorStore"]
+
+#: 过滤表达式字面量白名单：标识符安全字符（patient_id / chunk_id 均满足）
+_FILTER_LITERAL_RE = re.compile(r"^[A-Za-z0-9_.-]*$")
+
+
+def _filter_literal(value: str) -> str:
+    """校验并返回可安全内插到 Milvus filter 表达式的字面量。
+
+    filter 表达式为字符串拼接构建，值必须经白名单校验：
+    含引号/反斜杠/分号等字符的值直接抛 ``ValueError``（fail-closed，
+    拒绝表达式注入），不做转义兜底——合法的 patient_id / chunk_id
+    均为 ``[A-Za-z0-9_.-]`` 组成的短标识符。
+    """
+    if not _FILTER_LITERAL_RE.fullmatch(value):
+        raise ValueError(f"过滤字面量含非法字符（仅允许 [A-Za-z0-9_.-]）: {value!r}")
+    return value
 
 
 def _cosine(a: Embedding, b: Embedding) -> float:
@@ -182,7 +200,7 @@ class MilvusVectorStore:
             data=[embedding],
             limit=limit,
             output_fields=["payload"],
-            filter=f'patient_id == "{query.patient_id}" or patient_id == ""',
+            filter=f'patient_id == "{_filter_literal(query.patient_id)}" or patient_id == ""',
         )
         hits = results[0] if results else []
         items: list[RetrievedItem] = []
@@ -197,7 +215,7 @@ class MilvusVectorStore:
     def get_chunk(self, chunk_id: str) -> StoredChunk | None:
         rows = self._client.query(
             collection_name=self._collection,
-            filter=f'chunk_id == "{chunk_id}"',
+            filter=f'chunk_id == "{_filter_literal(chunk_id)}"',
             output_fields=["payload"],
             limit=1,
         )

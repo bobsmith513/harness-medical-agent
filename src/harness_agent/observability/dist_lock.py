@@ -1,10 +1,10 @@
-"""分布式锁实现（M7）：MemoryLock + RedisLock 骨架。
+"""分布式锁实现（M7）：MemoryLock + RedisLock。
 
 - ``MemoryLock``：Redis URL 留空时降级，进程内互斥锁；
-- ``RedisLock``：URL 填写后通过 redis-py SET NX EX 实现
-  （骨架，真实部署需安装 redis 包）。
+- ``RedisLock``：URL 填写后通过 redis-py SET NX EX 实现。
 
-两者共用 ``DistLock`` 接口（M1 契约）。
+两者共用 ``DistLock`` 接口（M1 契约）。redis 客户端的构建统一走
+``redis_compat.try_redis_client``（与 ``cache_store`` 共用同一降级模式）。
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import threading
 import time
 
 from harness_agent.contracts.observability import DistLock
+from harness_agent.observability.redis_compat import try_redis_client
 
 __all__ = ["MemoryLock", "RedisLock", "build_dist_lock"]
 
@@ -56,7 +57,7 @@ class MemoryLock:
 
 
 class RedisLock:
-    """Redis 分布式锁骨架（URL 填写后通过 SET NX EX 实现）。
+    """Redis 分布式锁（URL 填写后通过 SET NX EX 实现）。
 
     真实部署需安装 redis：
         pip install redis
@@ -66,16 +67,8 @@ class RedisLock:
 
     def __init__(self, url: str = "") -> None:
         self._url = url
-        self._client = None
+        self._client = try_redis_client(url)
         self._fallback = MemoryLock()
-
-        if url:
-            try:
-                import redis  # type: ignore[import-untyped]
-
-                self._client = redis.from_url(url)
-            except ImportError:
-                pass
 
     def acquire(self, key: str, ttl_s: float) -> bool:
         if self._client is not None:

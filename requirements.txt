@@ -1,22 +1,18 @@
 # ============================================================================
-# harness-medical-agent 基础运行依赖（演示 / CI / 快速验证）
+# harness-medical-agent 基础部署依赖（mock 模式，零外部服务）
 #
-# 只含 4 个核心包，与 pyproject [project].dependencies 完全一致：
-#   langgraph（编排）+ pydantic / pydantic-settings（配置与领域模型）
-#   + pyyaml（专家声明式配置）
-#
-# 默认 mock 模式零外部服务：5 个入口 demo 与全部测试可直接跑通。
-# 可选能力（在线 LLM / BGE / Milvus / MCP）按场景见：
-#   requirements-prod.txt（生产）/ requirements-full.txt（全量）/
-#   requirements-dev.txt（开发与测试）
+# 适用场景：本地演示 / CI / 快速验证
+#   - 不连接任何外部服务（无 LLM / 无 Milvus / 无数据库）
+#   - 4 个端到端 demo + 5 个模块级 demo + 581 项测试全部可跑
 #
 # 安装：
 #   pip install -r requirements.txt
 #   pip install -e .                # 项目本体（src-layout，必须安装）
 # ============================================================================
+# Python >= 3.10（推荐 3.10 / 3.11 / 3.12）
 
-# ---- 核心：编排与配置 ----
-langgraph>=1.2.11              # 主 Agent StateGraph 编排（route → plan → experts → finalize）
-pydantic>=2.7,<3               # 领域模型与契约校验
-pydantic-settings>=2.3,<3      # .env 环境变量 → 分层配置（HARNESS_ 前缀）
-PyYAML>=6.0.3                  # configs/experts.yaml 专家声明式配置
+# ---- 核心框架（必装）----
+langgraph>=1.2.11              # 主 Agent 编排（StateGraph 状态机）
+pydantic>=2.7,<3               # 领域模型校验（Evidence / ReasoningChain / SessionContext）
+pydantic-settings>=2.3,<3      # 配置系统（.env 环境变量绑定）
+pyyaml>=6.0.3                  # 专家声明式配置（configs/experts.yaml）

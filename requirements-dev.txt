@@ -10,7 +10,7 @@
 -r requirements.txt
 
 # ---- 测试 ----
-pytest>=8.0                    # 测试框架（详见 README 测试体系章节）
+pytest>=8.0                    # 测试框架（581 个用例）
 pytest-cov>=5.0                # 覆盖率报告
 
 # ---- 静态检查 ----

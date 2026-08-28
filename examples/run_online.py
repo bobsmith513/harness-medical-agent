@@ -1,4 +1,4 @@
-"""在线问诊入口（薄封装）——真正的 main 在 ``harness_agent.main``。
+"""在线问诊入口（薄封装）——真正的 main 在 ``harness_agent.cli``。
 
     uv run harness-online                     # 等价命令（pyproject [project.scripts]）
     uv run python examples/run_online.py      # 本文件
@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from harness_agent.main import main
+from harness_agent.cli import main
 
 if __name__ == "__main__":
     main()

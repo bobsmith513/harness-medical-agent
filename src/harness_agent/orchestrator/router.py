@@ -23,6 +23,7 @@ import re
 from pydantic import BaseModel, Field
 
 from harness_agent.contracts.llm import LLMClient, LLMMessage
+from harness_agent.llm.json_utils import extract_json_object
 from harness_agent.models.session import RouteDecision, RouteRecord, SessionContext
 
 __all__ = [
@@ -171,14 +172,17 @@ class LLMRouter:
         self._client = client
 
     def _parse(self, text: str) -> RouteDecision | None:
-        """从模型输出提取二值裁决；不可解析返回 None（误判信号）。"""
-        # 容错：剥离 markdown 代码块围栏后取首个 JSON 对象
-        cleaned = re.sub(r"```(?:json)?|```", "", text).strip()
-        match = re.search(r"\{[^{}]*\}", cleaned)
-        if not match:
+        """从模型输出提取二值裁决；不可解析返回 None（误判信号）。
+
+        括号深度扫描（字符串感知）替代旧正则 ``\\{[^{}]*\\}``：
+        支持嵌套对象输出（模型附加 ``{"meta": {...}}`` 时仍可取出
+        首个裁决对象），字符串内的花括号不误闭合。
+        """
+        fragment = extract_json_object(text)
+        if fragment is None:
             return None
         try:
-            payload = json.loads(match.group(0))
+            payload = json.loads(fragment)
         except json.JSONDecodeError:
             return None
         decision = payload.get("decision") if isinstance(payload, dict) else None

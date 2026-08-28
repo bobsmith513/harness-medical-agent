@@ -147,43 +147,26 @@ class ReasoningExpertImpl:
 
     @staticmethod
     def _parse_output(text: str, evidence: EvidencePack) -> dict:
-        """从 LLM 输出解析 JSON（容错：剥离 markdown 围栏）。"""
+        """从 LLM 输出解析 JSON（容错：剥离 markdown 围栏）。
+
+        fail-closed：无 JSON 或解析失败时抛异常（由编排层捕获转升级），
+        绝不构造"兜底结论"——与患者问题无关的罐头结论正是本系统
+        承诺绝不交付的东西。
+        """
         cleaned = re.sub(r"```(?:json)?|```", "", text).strip()
         match = re.search(r"\{.*\}", cleaned, re.DOTALL)
         if not match:
-            # Mock 兜底：LLM 无输出时，以首条证据构造最小合法链
-            return ReasoningExpertImpl._fallback_chain(evidence)
+            raise ValueError(
+                f"LLM 输出不含 JSON（长度 {len(cleaned)} 字符），"
+                "无法解析为推理链——fail-closed 转人工"
+            )
         try:
-            return json.loads(match.group(0))
-        except json.JSONDecodeError:
-            return ReasoningExpertImpl._fallback_chain(evidence)
-
-    @staticmethod
-    def _fallback_chain(evidence: EvidencePack) -> dict:
-        """LLM 输出不可解析时的最小合法链（以首条证据为据）。"""
-        if not evidence.evidence:
-            raise ValueError("证据包为空且 LLM 无有效输出，无法构造推理链")
-        first = evidence.evidence[0]
-        return {
-            "steps": [
-                {
-                    "kind": "evidence",
-                    "text": f"引用证据: {first.content[:100]}",
-                    "citations": [first.evidence_id],
-                },
-                {
-                    "kind": "inference",
-                    "text": "基于证据进行推断（LLM 输出不可解析，使用兜底链）",
-                },
-                {
-                    "kind": "conclusion",
-                    "text": "综合证据形成结论",
-                    "citations": [first.evidence_id],
-                },
-            ],
-            "statement": "基于可用证据形成的初步结论（需医生确认）。",
-            "self_check_notes": "兜底链自检通过（LLM 输出不可解析）",
-        }
+            parsed = json.loads(match.group(0))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"LLM 输出 JSON 解析失败: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError("LLM 输出 JSON 顶层必须是对象")
+        return parsed
 
     @staticmethod
     def _build_chain(parsed: dict, evidence: EvidencePack) -> ReasoningChain:
