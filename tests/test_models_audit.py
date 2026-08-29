@@ -45,9 +45,9 @@ class TestTraceEvent:
             trace_id="tr-1",
             session_id="sess-1",
             event_type="llm_call",
-            payload={"model": "deepseek-v4", "prompt_tokens": 1200},
+            payload={"model": "deepseek-chat", "prompt_tokens": 1200},
         )
-        assert event.payload["model"] == "deepseek-v4"
+        assert event.payload["model"] == "deepseek-chat"
 
 
 class TestAuditRecord:

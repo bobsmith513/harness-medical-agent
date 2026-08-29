@@ -256,7 +256,7 @@ class TestNoopTracer:
             trace_id="trace-1",
             session_id="sess-1",
             event_type="llm_call",
-            payload={"model": "deepseek-v4", "tokens": 100},
+            payload={"model": "deepseek-chat", "tokens": 100},
         )
         tracer.record(event)
         assert tracer.event_count == 1
@@ -696,7 +696,7 @@ class TestAcceptanceCriteria:
         # 模拟全链路事件
         events = [
             ("route", {"decision": "need_reasoning"}),
-            ("llm_call", {"model": "deepseek-v4", "tokens": 150}),
+            ("llm_call", {"model": "deepseek-chat", "tokens": 150}),
             ("retrieve", {"query": "阿奇霉素", "top_k": 5}),
             ("gate_check", {"gate": "quality_judge", "allowed": True}),
             ("conclude", {"statement": "阿奇霉素 500mg qd"}),

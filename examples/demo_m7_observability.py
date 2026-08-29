@@ -118,7 +118,7 @@ def demo_trace_events() -> None:
     # 模拟全链路事件
     events = [
         ("route", {"decision": "need_reasoning", "by_rule": True}),
-        ("llm_call", {"model": "deepseek-v4", "tokens": 150}),
+        ("llm_call", {"model": "deepseek-chat", "tokens": 150}),
         ("retrieve", {"query": "阿奇霉素", "top_k": 5, "evidence_count": 3}),
         ("gate_check", {"gate": "quality_judge", "allowed": True}),
         ("conclude", {"statement": "阿奇霉素 500mg qd 可用于肺炎"}),

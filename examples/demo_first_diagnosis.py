@@ -214,7 +214,10 @@ def main() -> None:
     )
 
     context = SessionContext(session_id="sess-first", patient_id=PAT_PENICILLIN)
-    # 查询不直接提及过敏药名——过敏史由安全栈硬规则精确匹配保障
+    # 查询里不含"青霉素"是刻意的：输入闸门不做意图识别，只要查询文本
+    # 检出过敏药名就拦截转人工——患者陈述过敏史的问法（"我青霉素过敏，
+    # 能吃什么"）同样会被拦。这是 fail-closed 的代价，
+    # 已列入 README「已知边界（诚实标注）」一节。
     user_query = "咳嗽三天伴发热，用药方案怎么定？"
 
     result = agent.handle(user_query, context)
