@@ -6,7 +6,7 @@
       → quality_judge（LLM-as-judge：引用一致性 + 因果倒置 + 忠实度阈值）
       → drug_safety（M2 输出闸门：结论+推理链全文扫描过敏药物）
       → 放行（GatePipelineResult.allowed=True）
-      └─ 任一拦截 → GatePipelineResult.allowed=False（调用方 interrupt 转人工）
+      └─ 任一拦截 → GatePipelineResult.allowed=False（调用方转人工）
 
 两道门禁不可交换顺序：质量门禁先做（引用/因果问题直接拦截，
 不必触发药物安全扫描浪费开销）；但即使质量通过，药物安全
@@ -44,8 +44,8 @@ class GatePipeline:
     """质量门禁 → 输出闸门 串联流水线。
 
     M4 主 Agent 的 ``reason`` 节点产出结论后调用本流水线；
-    ``allowed=False`` 时主 Agent interrupt（转人工 / 让模型重写），
-    绝不截断违规片段后放行。
+    ``allowed=False`` 时由主 Agent 写 ``escalation`` 转人工（结论在
+    ``finalize`` 被撤回），绝不截断违规片段后放行。
     """
 
     def __init__(self, quality_gate: QualityGate, output_gate: OutputGate) -> None:

@@ -12,8 +12,9 @@
   返回值透传进 state，``finalize`` 只组装不生产；
 - 推理专家委派前置校验 ``evidence_pack.is_reviewed``（M3 输入闸门
   拦截的空包在此 fail-closed 转 escalate，不进推理）；
-- **M5 门禁流水线**：``gates`` 节点串联质量门禁 → 输出闸门，
-  拦截即 interrupt（转人工），结论被门禁拦截后不得交付；
+- **M5 门禁流水线**：``gates`` 节点串联质量门禁 → 输出闸门，拦截即
+  写 ``escalation`` 转人工；结论在 ``finalize`` 被撤回（见下），
+  不产出任何"截断后放行"的路径；
 - 注册表声明的专家若未绑定运行时实现 → fail-closed 升级（配置与
   运行时的一致性在委派前检查）；
 - 检索失败（异常）→ escalate，绝不以空证据包臆造结论。
@@ -246,11 +247,15 @@ class HarnessOrchestrator:
         return {"conclusion": conclusion}
 
     def _gates_node(self, state: OrchestrationState) -> dict[str, Any]:
-        """M5 门禁流水线：质量门禁 → 输出闸门（拦截即 interrupt 转人工）。
+        """M5 门禁流水线：质量门禁 → 输出闸门（拦截即写 escalation 转人工）。
 
-        无门禁流水线时（``gate_pipeline=None``，M4 demo 场景）直接放行。
+        无门禁流水线时（``gate_pipeline=None``，M4 demo 场景）跳过门禁。
         拦截时结论被撤回——``finalize`` 只看到 escalation，不看到 conclusion。
-        门禁自身异常（在线 API 故障）同样 fail-closed 升级，不裸抛。
+
+        术语说明：这里用的是"写 escalation + finalize 丢弃 conclusion"，
+        **不是** langgraph 的 ``interrupt`` 原语（图是无环 DAG，无需中断
+        等待人工输入后恢复）。语义等价于 fail-closed，但不应写成 interrupt
+        以免误导为使用了 langgraph 的中断/恢复机制。
         """
         if state.get("escalation") is not None:
             return {}  # 已升级：保留首个原因
@@ -274,7 +279,7 @@ class HarnessOrchestrator:
                 )
             }
         if not result.allowed:
-            # interrupt：拦截即转人工，结论被门禁撤回
+            # 拦截即转人工：写 escalation，结论由 finalize 撤回
             return {
                 "escalation": EscalationRequest(
                     reason=f"门禁拦截（{result.blocking_gate}）: "

@@ -74,7 +74,14 @@ class OpenSandboxRuntime:
         return cp
 
     def restore(self, checkpoint: Checkpoint) -> bool:
-        """从持久卷恢复检查点（透明代理句柄不变）。"""
+        """从持久卷恢复检查点（仅当该检查点确实属于本会话且已保存）。
+
+        返回 False 表示"无从恢复"——恢复不了必须显式失败，不能靠
+        无条件返回 True 让调用方误以为状态已回滚成功。
+        """
         sid = checkpoint.session_id
-        self._checkpoints.setdefault(sid, {})[checkpoint.checkpoint_id] = checkpoint
+        saved = self._checkpoints.get(sid, {})
+        if checkpoint.checkpoint_id not in saved:
+            return False
+        self._checkpoints[sid][checkpoint.checkpoint_id] = checkpoint
         return True

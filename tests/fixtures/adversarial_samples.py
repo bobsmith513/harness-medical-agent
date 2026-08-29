@@ -6,12 +6,16 @@
 - 历史别名与品牌别名（盘尼西林 / 再林 / 罗氏芬 / 芬必得 / 拜阿司匹灵 / 希舒美）；
 - 类间交叉反应（β-内酰胺类 / NSAID 组）；
 - 全角字符混淆、大小写混淆、空白插入（含全角空格 / 制表符 / 换行）；
-- 组合混淆（全角 + 大小写 + 空白同时出现）；
+- **中缀分隔符插入**（``阿莫-西林`` / ``阿莫·西林`` / ``再/林``）
+  与**零宽字符插入**（U+200B / U+200D / U+00AD）——折叠必须剥离，
+  否则 ``str.find`` 失效、三道闸门同时漏检；
+- 组合混淆（全角 + 大小写 + 空白 / 零宽 / 软连字符同时出现）；
 - 多药并提（一句话里同时出现过敏药与安全药）；
-- 阴性对照（无交叉类别 / 词典外药物 / 库中无过敏记录的患者）。
+- 阴性对照（无交叉类别 / 词典外药物 / 库中无过敏记录的患者）；
+- **剥离规则的阴性护栏**（安全药物插入分隔符后仍不得被误拦）。
 
 漏检定义：``expect_blocked=True`` 的样本被闸门放行。
-验收口径：**本种子样本集**（30 条，阳性 22 + 阴性对照 8）漏检率
+验收口径：**本种子样本集**（37 条，阳性 28 + 阴性对照 9）漏检率
 必须为 0（tests/test_safety_adversarial.py）——它是回归底线而非
 覆盖完备性证明；扩词典 / 扩过敏史时同步追加样本。
 """
@@ -274,6 +278,65 @@ ADVERSARIAL_SAMPLES: list[AdversarialSample] = [
         description="阴性对照：无过敏记录患者问阿司匹林",
         patient_id="pat-004",
         text="阿司匹林和他汀能一起吃吗？",
+        expect_blocked=False,
+    ),
+    # ---- 中缀分隔符 / 零宽字符插入（adv-31..36） ----
+    # 折叠必须剥离这两类字符，否则 ``str.find`` 失效、三道闸门同时漏检。
+    AdversarialSample(
+        sample_id="adv-31",
+        description="中缀连字符插入（阿莫-西林）",
+        patient_id="pat-001",
+        text="医院开的阿莫-西林还能吃吗？",
+        expect_blocked=True,
+        expected_drugs=["amoxicillin"],
+    ),
+    AdversarialSample(
+        sample_id="adv-32",
+        description="零宽空格插入（阿莫<U+200B>西林）",
+        patient_id="pat-001",
+        text="医院开的阿莫\u200b西林还能吃吗？",
+        expect_blocked=True,
+        expected_drugs=["amoxicillin"],
+    ),
+    AdversarialSample(
+        sample_id="adv-33",
+        description="中缀间隔号插入（阿莫·西林）",
+        patient_id="pat-001",
+        text="处方上写的是阿莫·西林，能吃吗？",
+        expect_blocked=True,
+        expected_drugs=["amoxicillin"],
+    ),
+    AdversarialSample(
+        sample_id="adv-34",
+        description="英文连字符 + 大小写混合（AmoXi-CiLlIn）",
+        patient_id="pat-001",
+        text="can I take AmoXi-CiLlIn capsules?",
+        expect_blocked=True,
+        expected_drugs=["amoxicillin"],
+    ),
+    AdversarialSample(
+        sample_id="adv-35",
+        description="全角 + 零宽 + 软连字符三重混淆",
+        patient_id="pat-001",
+        text="ＡＭＯＸＩ\u200bＣＩＬ\u00adＬＩＮ过敏吗？",
+        expect_blocked=True,
+        expected_drugs=["amoxicillin"],
+    ),
+    AdversarialSample(
+        sample_id="adv-36",
+        description="品牌别名中缀斜杠插入（再/林）",
+        patient_id="pat-001",
+        text="上次开的再/林吃完了，再配一盒？",
+        expect_blocked=True,
+        expected_drugs=["amoxicillin"],
+    ),
+    # ---- 剥离规则的阴性护栏（adv-37） ----
+    # 证明剥离中缀字符只提升召回，不会把安全药物误判为过敏药物。
+    AdversarialSample(
+        sample_id="adv-37",
+        description="阴性对照：安全药插入连字符（阿奇-霉素，pat-001 无交叉）",
+        patient_id="pat-001",
+        text="换成阿奇-霉素可以吗？",
         expect_blocked=False,
     ),
 ]

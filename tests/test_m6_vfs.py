@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 
 import pytest
@@ -204,8 +205,12 @@ class TestBuildVfsStore:
             assert isinstance(store, FileBackedVfsStore)
 
     def test_unwritable_root_falls_back_to_memory(self):
-        # /dev/null 是文件而非目录，makedirs 必然失败 → 降级内存
-        store = build_vfs_store("/dev/null/not_a_directory")
+        # 以「真实文件的子路径」作为 root：os.makedirs 在 POSIX 与 Windows
+        # 上都会失败（NotADirectoryError 属 OSError）→ 降级内存存储。
+        # 不用 /dev/null/... —— 那是 POSIX 专有路径，Windows 上 makedirs
+        # 会真实创建 C:\dev\null\... 目录，测试既不失败也污染磁盘。
+        with tempfile.NamedTemporaryFile() as fp:
+            store = build_vfs_store(os.path.join(fp.name, "not_a_directory"))
         assert isinstance(store, InMemoryVfsStore)
 
 

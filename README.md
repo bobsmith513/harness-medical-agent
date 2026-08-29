@@ -7,7 +7,7 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Status](https://img.shields.io/badge/status-M8%E5%B7%B2%E5%AE%8C%E6%88%90-success)
 
-> 测试现状：**581 个用例**，零依赖 mock 环境全绿（可本地 `uv run pytest` 复跑）；`--all-extras` CI 环境为 577 通过 + 4 跳过（CI 全绿见顶部徽章，跳过原因见[测试体系](#测试体系在测什么不测什么)）。
+> 测试现状：**631 个用例**，零依赖 mock 环境全绿（可本地 `uv run pytest` 复跑）；`--all-extras` CI 环境为 627 通过 + 4 跳过（CI 全绿见顶部徽章，跳过原因见[测试体系](#测试体系在测什么不测什么)）。行覆盖率 84.88%（`pytest --cov` 实测，门禁阈值 80%）。
 
 **导航**：[快速开始](#快速开始) · [在线调用模式](#在线调用模式填两行-env-即可运行) · [测试体系](#测试体系在测什么不测什么) · [白盒日志走读](#白盒日志全链路走读) · [配置详情](#配置详情) · [项目结构](#项目结构)
 
@@ -17,7 +17,7 @@
 |------|------|
 | 主 Agent 纯编排 | 规划＋虚拟文件系统＋子代理委派，结构上不产出临床结论 |
 | fail-closed | 误路由二次路由、门禁未达标转澄清或人工，绝不静默降级应答 |
-| 硬规则不向量化 | 过敏史走药名归一化＋ATC 交叉反应精确匹配，配三道安全闸门 |
+| 硬规则不向量化 | 过敏史走药名归一化＋ATC 交叉反应精确匹配，配三道安全闸门（内置 32 条药物词典：β-内酰胺 13、NSAID 8、磺胺 3、阴性对照 8） |
 | 记忆需审核转正 | 摘要标注来源置信度、抽样审核通过才可召回，阻断推断固化为事实 |
 | 患者分区隔离 | patient_id 作为存储分区键，从存储层避免跨患者召回 |
 
@@ -128,7 +128,7 @@ uv run harness-online                     # 控制台命令（等价 examples/ru
 项目提供四套 requirements 文件，按场景选择：
 
 ```bash
-# 场景一：演示 / CI（零外部服务，4 个端到端 demo + 5 个模块级 demo + 581 项测试全跑通）
+# 场景一：演示 / CI（零外部服务，4 个端到端 demo + 5 个模块级 demo + 631 项测试全跑通）
 pip install -r requirements.txt && pip install -e .
 
 # 场景二：生产（接入 vLLM / 在线 API，.env 填 8 个字段）
@@ -171,7 +171,7 @@ uv run harness-online
 | `deepseek` | api.deepseek.com/v1 | deepseek-v4-pro | deepseek-v4-flash |
 | `qwen` | 阿里云百炼兼容模式 | qwen3.8-max | qwen3.8-flash |
 | `zhipu` | 智谱开放平台 | glm-4.6 | glm-4.5-air |
-| `moonshot` | 月之暗面 Kimi | kimi-k2.6 | kimi-k2.5 |
+| `moonshot` | 月之暗面 Kimi | kimi-k3 | kimi-k2.6 |
 | `openai` | OpenAI 官方 | gpt-4o | gpt-4o-mini |
 | `siliconflow` | 硅基流动聚合 | DeepSeek-V3 | Qwen2.5-72B |
 
@@ -201,7 +201,7 @@ cp .env.example .env
 
 | 场景 | 需填字段 | 说明 |
 |------|---------|------|
-| 零依赖演示 | 无（默认 mock） | 581 项测试 + 9 个 demo 全跑通 |
+| 零依赖演示 | 无（默认 mock） | 631 项测试 + 9 个 demo 全跑通 |
 | 在线调用 | `PROVIDER` + `API_KEY`（2 个） | 预设端点自动解析 |
 | 混合部署 | + `REASONING_BASE_URL` + `REASONING_MODEL` | 微调模型旁路 |
 | 自建端点 | 逐角色 `<ROLE>_BASE_URL` 等 | 通用 OpenAI 兼容协议 |
@@ -235,12 +235,12 @@ cp .env.example .env
 ```mermaid
 flowchart TD
     A["<b>步骤 0：脱敏中间件</b><br/>输入: 患者：张明（身份证 310101198001011234）...电话 13812345678<br/>输出: [REDACTED-NAME]（身份证 [REDACTED-ID]）...电话 [REDACTED-PHONE]<br/>移除: ID, PHONE, NAME"]
-    B["<b>步骤 1：装配组件</b><br/>知识库入库: 2 条（CAP 指南）<br/>过敏史: 盘尼西林 → penicillin (ATC=J01CE01)<br/>交叉反应阻断: amoxicillin, ceftriaxone"]
+    B["<b>步骤 1：装配组件</b><br/>知识库入库: 2 条（CAP 指南）<br/>过敏史: 盘尼西林 → penicillin (ATC=J01CE01)<br/>交叉反应阻断: β-内酰胺组共 12 条（青霉素类/一至四代头孢/碳青霉烯）"]
     C["<b>步骤 2：路由器裁决</b><br/>查询: 咳嗽三天伴发热，用药方案怎么定？<br/>路由: need_reasoning (by_rule=True)<br/>规则命中: 用药"]
     D["<b>步骤 3：检索供给层</b><br/>证据包: 1 条, is_reviewed=True<br/>命中: ev-1 CAP 患者 β-内酰胺类过敏 → 阿奇霉素替代"]
     E["<b>步骤 4：推理专家</b><br/>自检: 3/3 通过（引用真实/因果正向/依据充分）<br/>1. evidence: 引用证据...阿奇霉素为安全替代 (引用: ev-1)<br/>2. inference: β-内酰胺类过敏史，阿奇霉素无交叉反应<br/>3. conclusion: 建议阿奇霉素 500mg qd × 3-5 天"]
     F["<b>步骤 5：质量门禁</b><br/>quality_judge: 通过 — 忠实度 0.92 ≥ 0.70<br/>output: 通过 — 未涉及过敏药物（阿奇霉素不在阻断列表）"]
-    G["<b>步骤 6：临床结论</b><br/>结论: CAP 经验性治疗：阿奇霉素 500mg qd × 3-5 天<br/>产出者: reasoning_expert<br/>引用证据: ev-1<br/>结论ID: cc-ea7f0b509fb9"]
+    G["<b>步骤 6：临床结论</b><br/>结论: CAP 经验性治疗：阿奇霉素 500mg qd × 3-5 天<br/>产出者: reasoning_expert<br/>引用证据: ev-1<br/>结论ID: cc-8ae8530c4c1a（每次运行不同）"]
     H["<b>步骤 7：全链路 trace</b><br/>route → retrieve → reason → gate_check → conclude<br/>全链路事件总数: 5"]
 
     A --> B --> C --> D --> E --> F --> G --> H
@@ -269,7 +269,8 @@ M8 端到端演示一：初诊推理全链路
 ========================================================================
   知识库入库: 2 条（CAP 指南）
   过敏史: 盘尼西林 → penicillin (ATC=J01CE01)
-    交叉反应阻断: amoxicillin, ceftriaxone
+    交叉反应阻断（12 条）: amoxicillin, amoxicillin_clavulanate, ampicillin, cefazolin, cefepime, ceftazidime, ceftriaxone, cefuroxime, ertapenem, imipenem_cilastatin, meropenem, piperacillin
+[TRACE] bind session=sess-first trace=trace-first
   可观测栈: NoopTracer + SQLiteAuditStore + MemoryCacheStore
 
 ========================================================================
@@ -311,17 +312,25 @@ M8 端到端演示一：初诊推理全链路
   结论: CAP 经验性治疗：阿奇霉素 500mg qd × 3-5 天
   产出者: reasoning_expert
   引用证据: ['ev-1']
-  结论ID: cc-ea7f0b509fb9
+  结论ID: cc-8ae8530c4c1a
 
 ========================================================================
 步骤 7：全链路 trace 事件
 ========================================================================
+[TRACE] route trace=trace-first payload_keys=['decision', 'by_rule']
   [TRACE] route: {'decision': 'need_reasoning', 'by_rule': True}
+[TRACE] retrieve trace=trace-first payload_keys=['query', 'evidence_count']
   [TRACE] retrieve: {'query': '咳嗽三天伴发热，用药方案怎么定？', 'evidence_count': 1}
+[TRACE] reason trace=trace-first payload_keys=['chain_steps', 'self_check']
   [TRACE] reason: {'chain_steps': 3, 'self_check': True}
+[TRACE] gate_check trace=trace-first payload_keys=['quality_judge', 'output']
   [TRACE] gate_check: {'quality_judge': 'pass', 'output': 'pass'}
+[TRACE] conclude trace=trace-first payload_keys=['statement']
   [TRACE] conclude: {'statement': 'CAP 经验性治疗：阿奇霉素 500mg qd × 3-5 天'}
   全链路事件总数: 5
+
+> 注：trace 行与白盒打印都走 stderr，终端里会交错出现；此处按实际输出
+> 原样保留（未做人为整理）。结论 ID / session ID 每次运行不同。
 
 ========================================================================
 初诊推理全链路验收总结:
@@ -549,8 +558,8 @@ uv run python examples/demo_m7_observability.py # M7: 脱敏 + 沙箱 + trace
 
 ## 测试体系：在测什么，不测什么
 
-当前 **581 个用例**（27 个测试文件）：零依赖 mock 环境全部通过；`uv sync --all-extras`
-后的 CI 环境为 577 通过 + 4 跳过（跳过原因见下文），可本地 `uv run pytest -v` 复跑核对。
+当前 **631 个用例**（27 个测试文件）：零依赖 mock 环境全部通过；`uv sync --all-extras`
+后的 CI 环境为 627 通过 + 4 跳过（跳过原因见下文），可本地 `uv run pytest -v` 复跑核对。
 全部测试在进程内完成：外部服务（LLM / Redis / 数据库）一律以契约假件或降级路径覆盖，
 不依赖任何真实端点——Redis 测试通过 monkeypatch 模拟 SDK 缺失，装了 redis 包的环境
 也不会发起真实连接。全绿证明的是工程行为正确——解析、降级、升级路径可控，
@@ -564,10 +573,10 @@ uv run python examples/demo_m7_observability.py # M7: 脱敏 + 沙箱 + trace
 
 | 类别 | 被测内容 | 代表文件 |
 |------|---------|---------|
-| 纯工程逻辑 | 不依赖模型的算法：药名归一化折叠（全角/别名）、RRF 融合数学、VFS 状态机 | `test_safety_normalization.py`（15 项） |
-| 安全对抗 | 过敏闸门对全角混淆、历史/品牌别名、交叉反应的**种子样本集**（30 条）漏检率必须为 0 | `test_safety_adversarial.py`（62 项） |
+| 纯工程逻辑 | 不依赖模型的算法：药名归一化折叠（全角/别名/零宽/中缀分隔符）、RRF 融合数学、VFS 状态机 | `test_safety_normalization.py`（19 项） |
+| 安全对抗 | 过敏闸门对全角混淆、历史/品牌别名、交叉反应、**零宽字符与中缀分隔符插入**的**种子样本集**（37 条，阳性 28 + 阴性 9）漏检率必须为 0 | `test_safety_adversarial.py`（76 项） |
 | 容错路径 | LLM 输出不可控时的行为：垃圾应答 → 二次路由 → 仍失败 → escalate，断言调用次数恰好 2 次 | `test_orchestrator_router.py`（34 项） |
-| fail-closed 骨架 | 推理专家抛异常 → 结论不产出、转人工，绝不静默放行 | `test_orchestrator_agent.py`（15 项） |
+| fail-closed 骨架 | 推理专家抛异常 → 结论不产出、转人工；门禁拦截/异常 → 结论撤回；路由异常、任务清单缺失、记忆专家异常共 12 条升级出口逐条断言 `to_human=True` + 结论为空 | `test_orchestrator_agent.py`（23 项） |
 | 装配解析 | `.env` → 客户端配置的优先级规则（角色覆盖 > 共享 Key > provider 预设），只断言字段值 | `test_llm_online_wiring.py`（17 项） |
 | 解析健壮性 | LLM 输出 JSON 提取：嵌套对象、多段输出、字符串内花括号、围栏包裹（路由器与 judge 共用解析器） | `test_llm_json_parsing.py`（20 项） |
 | 端点容错 | OpenAI 兼容端点返回非 JSON / 缺字段 / 非文本 content 时的分类报错（MockTransport 离线注入） | `test_llm_response_protection.py`（13 项） |
@@ -586,6 +595,18 @@ uv run python examples/demo_m7_observability.py # M7: 脱敏 + 沙箱 + trace
 uv run pytest -q                       # CI 口径：静默
 uv run pytest -vv --durations=15 -rs   # 逐条 + 最慢 15 项 + 跳过原因
 ```
+
+### 已知边界（诚实标注）
+
+以下都是**当前实现的真实边界**，不是待办清单上的"未来会做"：
+
+| 边界 | 现状 | 影响 |
+|------|------|------|
+| 药物词典覆盖面 | 内置 32 条（β-内酰胺 13 / NSAID 8 / 磺胺 3 / 阴性对照 8） | 词典外的药物（如氯雷他定）不参与硬规则匹配——硬规则只对词典内药物生效。生产须用 `HARNESS_SAFETY__DICTIONARY_PATH` 指向完整词典 |
+| 姓名脱敏范围 | 只匹配**显式标记式**（`姓名：张明` / `患者：张明`） | 自由文本里的姓名（"张明，45 岁，咳嗽三天"）**不会**被脱敏。这是刻意的取舍：中文姓名无分隔符，正则匹配会大量误伤临床正文。身份证 / 手机 / 邮箱 / 患者编号不受此限制 |
+| 单环 β-内酰胺 | 氨曲南（`J01DF01`）刻意不并入 `beta_lactam` 组 | 与青霉素类交叉反应极低，临床视为可安全替代；并入会无谓误拦 |
+| 同父补全隔离 | `sibling_ids` 取回的相邻 chunk 在门面层校验 `patient_id` | 底层 `get_chunk` 是按 chunk_id 的全局直查（三处实现均无 patient_id 条件），越界 chunk 在进入证据包前被丢弃 |
+| 精排与语义 | 零依赖默认为哈希嵌入 + identity 精排 | 无语义能力，见架构图上的诚实标注 |
 
 ## 配置详情
 
@@ -677,9 +698,9 @@ src/harness_agent/
   observability/  # 可观测栈（Tracer + 脱敏 + 审计 + 缓存 + 锁）
   llm/            # LLM 客户端（Mock + OpenAI 兼容）
 tests/
-  fixtures/       # 合成数据（对抗样本种子集 30 条 + 患者档案 + 知识条目）
+  fixtures/       # 合成数据（对抗样本种子集 37 条 + 患者档案 + 知识条目）
   factories.py    # 测试工厂（最小合法模型构造）
-  test_*.py       # 27 个文件，581 个用例（进程内完成，不依赖真实端点；CI 全绿见顶部徽章）
+  test_*.py       # 27 个文件，631 个用例（进程内完成，不依赖真实端点；CI 全绿见顶部徽章）
 examples/
   demo_*.py       # 端到端 + 模块级 demo
 requirements*.txt # 四套部署依赖（基础/生产/全量/开发）

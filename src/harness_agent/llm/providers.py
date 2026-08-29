@@ -7,8 +7,10 @@
 预设只提供「端点 + 推荐模型名」的默认值，逐角色仍可用
 ``HARNESS_LLM__<ROLE>_BASE_URL / _MODEL`` 覆盖——例如推理专家
 指向本地 vLLM 部署的 SFT+DPO 微调模型，其余角色走在线 API。
-推荐模型名是编写时的快照，以各服务商官网当期在售型号为准；
-下架或更名时用 ``_MODEL`` 覆盖即可，预设只是默认值而非功能依赖。
+推荐模型名是编写时的快照（2026-08 核对），以各服务商官网当期在售
+型号为准；下架或更名时用 ``_MODEL`` 覆盖即可，预设只是默认值而非
+功能依赖。**新增/修改预设前请核对官网模型列表**——把已下线型号写成
+默认值会让"填两行 .env 即可运行"直接变成 404。
 
 各服务商端点均为 OpenAI 兼容协议（``{base_url}/chat/completions``）。
 """
@@ -65,13 +67,16 @@ PROVIDER_PRESETS: dict[str, ProviderPreset] = {
         orchestrator_model="glm-4.6",
         key_portal="https://open.bigmodel.cn/",
     ),
-    # 月之暗面 Kimi：kimi-k2 系列，256K 长上下文
+    # 月之暗面 Kimi：k3 旗舰 + k2.6 轻量档，256K 长上下文
+    # ⚠ 已下线的型号不要写进预设：kimi-k2.5 与 moonshot-v1 系列于
+    # 2026-08-31 全平台下线（此前已停止向新注册用户开放），
+    # kimi-k2 系列更早于 2026-05-25 下线。
     "moonshot": ProviderPreset(
         base_url="https://api.moonshot.cn/v1",
-        reasoning_model="kimi-k2.6",
-        judge_model="kimi-k2.5",
-        router_model="kimi-k2.5",
-        orchestrator_model="kimi-k2.6",
+        reasoning_model="kimi-k3",
+        judge_model="kimi-k2.6",
+        router_model="kimi-k2.6",
+        orchestrator_model="kimi-k3",
         key_portal="https://platform.moonshot.cn/",
     ),
     # OpenAI 官方：gpt-4o 系列

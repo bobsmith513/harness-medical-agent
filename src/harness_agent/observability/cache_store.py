@@ -29,12 +29,17 @@ class MemoryCacheStore:
         self._store: dict[str, tuple[str, float | None]] = {}
 
     def get(self, key: str) -> str | None:
-        """读取缓存（过期返回 None）。"""
+        """读取缓存（过期返回 None）。
+
+        过期判定用 ``>=`` 而非 ``>``：``ttl_s=0`` 语义为"写入即过期"，
+        严格大于会让它在系统计时器分辨率内（Windows 约 15.6ms）取到
+        未过期的值，使过期行为依赖平台计时精度。
+        """
         entry = self._store.get(key)
         if entry is None:
             return None
         value, expires_at = entry
-        if expires_at is not None and time.time() > expires_at:
+        if expires_at is not None and time.time() >= expires_at:
             del self._store[key]
             return None
         return value

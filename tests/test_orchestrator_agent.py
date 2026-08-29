@@ -20,7 +20,9 @@ from harness_agent.contracts.experts import (
     ReasoningExpert,
 )
 from harness_agent.contracts.retrieval import RetrievalQuery, RetrievalService
+from harness_agent.gates.pipeline import GatePipeline, GatePipelineResult
 from harness_agent.llm.mock import MockLLMClient
+from harness_agent.models.audit import GateVerdict
 from harness_agent.models.evidence import Evidence, EvidencePack, SourceRef
 from harness_agent.models.reasoning import (
     ClinicalConclusion,
@@ -96,6 +98,78 @@ class _StaticPackRetrieval:
         return self._pack
 
 
+class _PassingGatePipeline:
+    """门禁流水线桩：恒定放行（记录调用次数，用于验证 gates 节点真的执行了）。"""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def run(
+        self,
+        conclusion: ClinicalConclusion,
+        evidence: EvidencePack,
+        context: SessionContext,
+    ) -> GatePipelineResult:
+        self.calls += 1
+        return GatePipelineResult(
+            allowed=True,
+            verdicts=[GateVerdict(gate="quality_judge", allowed=True, reason="桩门禁放行")],
+        )
+
+
+class _BlockingGatePipeline:
+    """门禁流水线桩：恒定拦截（模拟 quality_judge 忠实度不足）。"""
+
+    def run(
+        self,
+        conclusion: ClinicalConclusion,
+        evidence: EvidencePack,
+        context: SessionContext,
+    ) -> GatePipelineResult:
+        return GatePipelineResult(
+            allowed=False,
+            verdicts=[
+                GateVerdict(gate="quality_judge", allowed=False, reason="桩门禁拦截：忠实度 0.30")
+            ],
+            blocking_gate="gate:quality_judge",
+        )
+
+
+class _ExplodingGatePipeline:
+    """门禁流水线桩：执行即抛异常（模拟 judge 在线端点 502 / 超时）。"""
+
+    def run(
+        self,
+        conclusion: ClinicalConclusion,
+        evidence: EvidencePack,
+        context: SessionContext,
+    ) -> GatePipelineResult:
+        raise RuntimeError("judge 端点不可用")
+
+
+class _ExplodingRouter:
+    """路由桩：route 即抛异常（模拟在线 API 401 / 连接超时）。"""
+
+    def route(self, user_input: str, context: SessionContext):
+        raise RuntimeError("路由 LLM 端点 401")
+
+
+class _EmptyPlanner:
+    """规划器桩：恒返回空任务清单（触发"任务清单缺失"fail-closed 分支）。"""
+
+    def plan(self, user_input: str, route, context: SessionContext) -> list[ExpertTask]:
+        return []
+
+
+class _ExplodingMemoryExpert:
+    """记忆专家桩：assemble 即抛异常（模拟记忆检索后端故障）。"""
+
+    name = "memory_expert"
+
+    def assemble(self, query: RetrievalQuery, context: SessionContext) -> ContextBundle:
+        raise RuntimeError("记忆检索不可用")
+
+
 def _approved_pack() -> EvidencePack:
     """已通过装配复核的证据包（一条知识库证据）。"""
     evidence = Evidence(
@@ -104,8 +178,6 @@ def _approved_pack() -> EvidencePack:
         confidence="medium",
         provenance="knowledge_base",
     )
-    from harness_agent.models.audit import GateVerdict
-
     return EvidencePack(
         session_id="sess-1",
         patient_id=PAT_CLEAN,
@@ -120,19 +192,30 @@ def _orchestrator(
     llm_script: list[str] | None = None,
     retrieval: RetrievalService | None = None,
     experts: dict | None = None,
+    router: BinaryRouter | None = None,
+    planner: TaskPlanner | None = None,
+    gate_pipeline: GatePipeline | None = None,
 ) -> HarnessOrchestrator:
-    """装配测试用主 Agent（默认零依赖 mock 栈 + 桩专家）。"""
+    """装配测试用主 Agent（默认零依赖 mock 栈 + 桩专家）。
+
+    ``gate_pipeline`` 默认为 ``None``——与生产装配的差异：
+    ``orchestrator.wiring.build_orchestrator`` 会自动装配真实流水线，
+    而这里保留 None 是为了沿用 M4 的「未接门禁」基线用例。
+    测 gates 节点时必须显式传入（见 ``TestGatePipelineWiring``）。
+    """
     registry = load_experts()
-    llm = MockLLMClient(role="router", script=llm_script or [])
-    router = BinaryRouter(rule_router=RuleRouter(), llm_router=LLMRouter(client=llm))
+    if router is None:
+        llm = MockLLMClient(role="router", script=llm_script or [])
+        router = BinaryRouter(rule_router=RuleRouter(), llm_router=LLMRouter(client=llm))
     return HarnessOrchestrator(
         router=router,
-        planner=TaskPlanner(registry),
+        planner=planner if planner is not None else TaskPlanner(registry),
         retrieval=retrieval if retrieval is not None else build_retrieval_stack().service,
         registry=registry,
         experts=experts
         if experts is not None
         else {"reasoning_expert": StubReasoningExpert(), "memory_expert": StubMemoryExpert()},
+        gate_pipeline=gate_pipeline,
     )
 
 
@@ -235,17 +318,21 @@ class TestEscalationPath:
         assert result.conclusion is None
 
     def test_unbound_reasoning_expert_fails_closed(self):
-        """注册表有声明但运行时未绑定实现 → fail-closed。"""
+        """注册表有声明但运行时未绑定实现 → fail-closed（结论必须被撤回）。"""
         agent = _orchestrator(experts={"memory_expert": StubMemoryExpert()})
         result = agent.handle("帮我看看诊断", _context())
         assert result.escalation is not None
+        assert result.escalation.to_human is True
         assert "未绑定" in result.escalation.reason
+        assert result.conclusion is None
 
     def test_unbound_memory_expert_fails_closed(self):
         agent = _orchestrator(experts={"reasoning_expert": StubReasoningExpert()})
         result = agent.handle("我上次说过什么", _context())
         assert result.escalation is not None
+        assert result.escalation.to_human is True
         assert "未绑定" in result.escalation.reason
+        assert result.context_bundle is None
 
     def test_retrieval_exception_fails_closed(self):
         """检索异常 → 升级人工，绝不含空证据臆造结论。"""
@@ -259,6 +346,109 @@ class TestEscalationPath:
         assert result.escalation is not None
         assert result.escalation.to_human is True
         assert result.conclusion is None
+
+
+# ---------------------------------------------------------------------------
+# 门禁节点接线（gates 节点此前在本文件中 0 覆盖：默认装配未传 gate_pipeline）
+# ---------------------------------------------------------------------------
+class TestGatePipelineWiring:
+    def test_gates_node_runs_when_pipeline_bound(self):
+        """绑定流水线后 gates 节点必须真的执行（此前 14/15 用例跳过该节点）。"""
+        gates = _PassingGatePipeline()
+        agent = _orchestrator(retrieval=_StaticPackRetrieval(_approved_pack()), gate_pipeline=gates)
+        result = agent.handle("帮我看看诊断", _context())
+
+        assert result.conclusion is not None
+        assert gates.calls == 1
+        assert result.escalation is None
+        assert [v.gate for v in result.gate_verdicts] == ["quality_judge"]
+
+    def test_gate_interception_withdraws_conclusion(self):
+        """门禁拦截 → 结论被撤回 + 转人工（fail-closed 核心语义）。"""
+        agent = _orchestrator(
+            retrieval=_StaticPackRetrieval(_approved_pack()),
+            gate_pipeline=_BlockingGatePipeline(),
+        )
+        result = agent.handle("帮我看看诊断", _context())
+
+        assert result.escalation is not None
+        assert result.escalation.to_human is True
+        assert "门禁拦截" in result.escalation.reason
+        assert "gate:quality_judge" in result.escalation.reason
+        assert result.conclusion is None  # 拦截即撤回，绝不静默放行
+        assert result.gate_verdicts and result.gate_verdicts[-1].allowed is False
+
+    def test_no_pipeline_means_no_gate_verdicts(self):
+        """未绑定流水线时门禁节点空转（M4 基线语义，不是放行语义）。"""
+        agent = _orchestrator(retrieval=_StaticPackRetrieval(_approved_pack()))
+        result = agent.handle("帮我看看诊断", _context())
+        assert result.conclusion is not None
+        assert not result.gate_verdicts
+
+
+# ---------------------------------------------------------------------------
+# fail-closed 出口补齐（agent.py 中此前零覆盖的 5 条异常/缺失分支）
+# ---------------------------------------------------------------------------
+class TestFailClosedExits:
+    """每条出口都要断言完整语义：to_human=True **且** 结论被撤回。"""
+
+    def test_router_exception_escalates_to_human(self):
+        """路由节点异常（在线 API 401/超时）→ 转人工，不裸抛。"""
+        agent = _orchestrator(router=_ExplodingRouter())  # type: ignore[arg-type]
+        result = agent.handle("帮我看看诊断", _context())
+
+        assert result.escalation is not None
+        assert result.escalation.to_human is True
+        assert "路由器执行异常" in result.escalation.reason
+        assert result.conclusion is None
+
+    def test_missing_reasoning_task_escalates_to_human(self):
+        """任务清单缺 reasoning 委派（结论唯一来源）→ 转人工。"""
+        agent = _orchestrator(planner=_EmptyPlanner())  # type: ignore[arg-type]
+        result = agent.handle("帮我看看诊断", _context())
+
+        assert result.escalation is not None
+        assert result.escalation.to_human is True
+        assert "任务清单缺失 reasoning 专家任务" in result.escalation.reason
+        assert result.conclusion is None
+
+    def test_missing_memory_task_escalates_to_human(self):
+        """任务清单缺 memory 委派 → 转人工，不降级为主 Agent 应答。"""
+        agent = _orchestrator(planner=_EmptyPlanner())  # type: ignore[arg-type]
+        result = agent.handle("我上次说过什么", _context())
+
+        assert result.escalation is not None
+        assert result.escalation.to_human is True
+        assert "任务清单缺失 memory 专家任务" in result.escalation.reason
+        assert result.context_bundle is None
+
+    def test_gate_pipeline_exception_escalates_to_human(self):
+        """门禁流水线自身异常（judge 端点故障）→ 转人工，绝不静默放行。"""
+        agent = _orchestrator(
+            retrieval=_StaticPackRetrieval(_approved_pack()),
+            gate_pipeline=_ExplodingGatePipeline(),  # type: ignore[arg-type]
+        )
+        result = agent.handle("帮我看看诊断", _context())
+
+        assert result.escalation is not None
+        assert result.escalation.to_human is True
+        assert "门禁流水线执行异常" in result.escalation.reason
+        assert result.conclusion is None
+
+    def test_memory_expert_exception_escalates_to_human(self):
+        """记忆专家执行异常 → 转人工。"""
+        agent = _orchestrator(
+            experts={
+                "reasoning_expert": StubReasoningExpert(),
+                "memory_expert": _ExplodingMemoryExpert(),
+            }
+        )
+        result = agent.handle("我上次说过什么", _context())
+
+        assert result.escalation is not None
+        assert result.escalation.to_human is True
+        assert "记忆专家执行异常" in result.escalation.reason
+        assert result.context_bundle is None
 
 
 # ---------------------------------------------------------------------------

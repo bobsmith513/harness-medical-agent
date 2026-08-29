@@ -19,6 +19,30 @@ class TestFoldText:
     def test_plain_text_passthrough(self):
         assert fold_text("阿莫西林") == "阿莫西林"
 
+    def test_strip_zero_width_chars(self):
+        """零宽字符必须剥离：否则 find_mentions 的 str.find 恒为 -1。"""
+        assert fold_text("阿莫\u200b西林") == "阿莫西林"
+        assert fold_text("阿莫\u200d西林") == "阿莫西林"
+        assert fold_text("阿莫\u00ad西林") == "阿莫西林"
+        assert fold_text("阿莫\ufeff西林") == "阿莫西林"
+
+    def test_strip_infix_separators(self):
+        """中缀分隔符必须剥离：否则「阿莫-西林」绕过全部三道闸门。"""
+        assert fold_text("阿莫-西林") == "阿莫西林"
+        assert fold_text("阿莫·西林") == "阿莫西林"
+        assert fold_text("阿莫/西林") == "阿莫西林"
+
+    def test_fullwidth_separator_is_stripped_after_conversion(self):
+        """全角分隔符先转半角、再剥离（顺序敏感）。"""
+        assert fold_text("ＡＭＯＸＩ－ＣＩＬＬＩＮ") == "amoxicillin"
+
+    def test_stripping_is_symmetric_for_dictionary_and_text(self):
+        """词典别名与待扫描文本共用 fold_text，两侧折叠结果必须一致。"""
+        dictionary = DrugDictionary(SEED_DRUG_DICTIONARY)
+        for alias in ("阿莫西林", "再林", "amoxicillin"):
+            assert fold_text(alias) == fold_text(fold_text(alias))
+            assert dictionary.alias_index[fold_text(alias)] == "amoxicillin"
+
 
 class TestNormalize:
     def test_generic_name(self, normalizer):

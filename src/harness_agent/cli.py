@@ -39,6 +39,7 @@ from harness_agent.models.session import SessionContext  # noqa: E402
 from harness_agent.observability import PatternDesensitizer  # noqa: E402
 from harness_agent.orchestrator import build_orchestrator  # noqa: E402
 from harness_agent.retrieval.wiring import build_retrieval_stack  # noqa: E402
+from harness_agent.safety import build_safety_stack  # noqa: E402
 
 __all__ = ["main"]
 
@@ -152,12 +153,18 @@ def _patient_memory_chunks(profiles: list) -> list[StoredChunk]:
 
 
 def _build_agent(settings: Settings):
-    """装配主 Agent（LLM 客户端形态由 .env 决定，代码零分叉）。"""
+    """装配主 Agent（LLM 客户端形态由 .env 决定，代码零分叉）。
+
+    安全栈单例：检索层的输入/装配闸门与编排层的输出闸门共用同一
+    ``SafetyStack`` 实例——否则两侧各持一份过敏史，过敏记录一旦来自
+    外部 HIS / EMR 就会出现"一端拦、一端放"的口径分叉。
+    """
     reasoning_llm = build_llm_client("reasoning", settings)
     judge_llm = build_llm_client("judge", settings)
     router_llm = build_llm_client("router", settings)
 
-    stack = build_retrieval_stack(settings)
+    safety = build_safety_stack(settings)
+    stack = build_retrieval_stack(settings, safety=safety)
 
     kb_count = 0
     mem_count = 0
@@ -178,12 +185,13 @@ def _build_agent(settings: Settings):
     agent = build_orchestrator(
         experts={
             "reasoning_expert": ReasoningExpertImpl(llm=reasoning_llm, retrieval=stack.service),
-            "memory_expert": MemoryExpertImpl(retrieval=stack.service),
+            "memory_expert": MemoryExpertImpl(retrieval=stack.service, safety=safety),
         },
         retrieval=stack.service,
         router_llm=router_llm,
         judge_llm=judge_llm,
         settings=settings,
+        safety=safety,
     )
     return agent, kb_count, mem_count
 

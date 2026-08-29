@@ -32,7 +32,7 @@ from harness_agent.retrieval.embeddings import BGEEmbeddingProvider, HashingEmbe
 from harness_agent.retrieval.fusion import BGEReranker, IdentityReranker
 from harness_agent.retrieval.service import HybridRetrievalService
 from harness_agent.retrieval.vector_store import InMemoryVectorStore, MilvusVectorStore
-from harness_agent.safety import build_safety_stack
+from harness_agent.safety import SafetyStack, build_safety_stack
 
 __all__ = [
     "RetrievalStack",
@@ -53,6 +53,8 @@ class RetrievalStack:
     vector_store: VectorStore
     sparse: SparseRetriever
     reranker: Reranker
+    #: 与检索闸门同源的安全栈（供编排层复用，保证两端阻断口径一致）
+    safety: SafetyStack
 
 
 def _build_embedding_provider(settings: RetrievalSettings) -> EmbeddingProvider:
@@ -75,8 +77,19 @@ def _build_reranker(settings: RetrievalSettings) -> Reranker:
     return IdentityReranker()
 
 
-def build_retrieval_stack(settings: Settings | None = None) -> RetrievalStack:
-    """按配置装配完整检索供给栈（含 M2 安全闸门）。"""
+def build_retrieval_stack(
+    settings: Settings | None = None,
+    safety: SafetyStack | None = None,
+) -> RetrievalStack:
+    """按配置装配完整检索供给栈（含 M2 安全闸门）。
+
+    参数：
+        settings: 配置（None 时取全局配置）
+        safety:   已装配的安全栈（None 时新建）。**共享注入点**——
+                  编排层的输出闸门与检索层的输入/装配闸门必须共用
+                  同一实例，否则"两端阻断口径一致"不成立；调用方应
+                  先建一个 ``SafetyStack`` 再分别注入两侧。
+    """
     if settings is None:
         settings = get_settings()
     retrieval = settings.retrieval
@@ -85,7 +98,7 @@ def build_retrieval_stack(settings: Settings | None = None) -> RetrievalStack:
     vector_store = _build_vector_store(retrieval)
     sparse: SparseRetriever = BM25SparseRetriever()
     reranker = _build_reranker(retrieval)
-    safety = build_safety_stack(settings)
+    safety = safety if safety is not None else build_safety_stack(settings)
 
     service = HybridRetrievalService(
         embedding_provider=embedding_provider,
@@ -105,4 +118,5 @@ def build_retrieval_stack(settings: Settings | None = None) -> RetrievalStack:
         vector_store=vector_store,
         sparse=sparse,
         reranker=reranker,
+        safety=safety,
     )

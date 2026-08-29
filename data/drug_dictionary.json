@@ -5,6 +5,7 @@
     "aliases": [
       "青霉素",
       "盘尼西林",
+      "苄青霉素",
       "benzylpenicillin"
     ],
     "cross_group": "beta_lactam"
@@ -14,7 +15,54 @@
     "atc_code": "J01CA04",
     "aliases": [
       "阿莫西林",
-      "再林"
+      "再林",
+      "阿莫仙"
+    ],
+    "cross_group": "beta_lactam"
+  },
+  {
+    "normalized_name": "ampicillin",
+    "atc_code": "J01CA01",
+    "aliases": [
+      "氨苄西林",
+      "氨苄青霉素"
+    ],
+    "cross_group": "beta_lactam"
+  },
+  {
+    "normalized_name": "piperacillin",
+    "atc_code": "J01CA12",
+    "aliases": [
+      "哌拉西林",
+      "氧哌嗪青霉素"
+    ],
+    "cross_group": "beta_lactam"
+  },
+  {
+    "normalized_name": "amoxicillin_clavulanate",
+    "atc_code": "J01CR02",
+    "aliases": [
+      "阿莫西林克拉维酸钾",
+      "安灭菌",
+      "奥格门汀"
+    ],
+    "cross_group": "beta_lactam"
+  },
+  {
+    "normalized_name": "cefazolin",
+    "atc_code": "J01DB04",
+    "aliases": [
+      "头孢唑林",
+      "先锋五号"
+    ],
+    "cross_group": "beta_lactam"
+  },
+  {
+    "normalized_name": "cefuroxime",
+    "atc_code": "J01DC02",
+    "aliases": [
+      "头孢呋辛",
+      "西力欣"
     ],
     "cross_group": "beta_lactam"
   },
@@ -28,11 +76,66 @@
     "cross_group": "beta_lactam"
   },
   {
+    "normalized_name": "ceftazidime",
+    "atc_code": "J01DD02",
+    "aliases": [
+      "头孢他啶",
+      "复达欣"
+    ],
+    "cross_group": "beta_lactam"
+  },
+  {
+    "normalized_name": "cefepime",
+    "atc_code": "J01DE01",
+    "aliases": [
+      "头孢吡肟",
+      "马斯平"
+    ],
+    "cross_group": "beta_lactam"
+  },
+  {
+    "normalized_name": "meropenem",
+    "atc_code": "J01DH02",
+    "aliases": [
+      "美罗培南",
+      "美平"
+    ],
+    "cross_group": "beta_lactam"
+  },
+  {
+    "normalized_name": "imipenem_cilastatin",
+    "atc_code": "J01DH51",
+    "aliases": [
+      "亚胺培南西司他丁",
+      "泰能"
+    ],
+    "cross_group": "beta_lactam"
+  },
+  {
+    "normalized_name": "ertapenem",
+    "atc_code": "J01DH03",
+    "aliases": [
+      "厄他培南",
+      "怡万之"
+    ],
+    "cross_group": "beta_lactam"
+  },
+  {
+    "normalized_name": "aztreonam",
+    "atc_code": "J01DF01",
+    "aliases": [
+      "氨曲南",
+      "君刻单"
+    ],
+    "cross_group": null
+  },
+  {
     "normalized_name": "aspirin",
     "atc_code": "N02BA01",
     "aliases": [
       "阿司匹林",
-      "拜阿司匹灵"
+      "拜阿司匹灵",
+      "乙酰水杨酸"
     ],
     "cross_group": "nsaid"
   },
@@ -46,11 +149,150 @@
     "cross_group": "nsaid"
   },
   {
+    "normalized_name": "naproxen",
+    "atc_code": "M01AE02",
+    "aliases": [
+      "萘普生",
+      "甲氧萘丙酸"
+    ],
+    "cross_group": "nsaid"
+  },
+  {
+    "normalized_name": "diclofenac",
+    "atc_code": "M01AB05",
+    "aliases": [
+      "双氯芬酸",
+      "扶他林"
+    ],
+    "cross_group": "nsaid"
+  },
+  {
+    "normalized_name": "indomethacin",
+    "atc_code": "M01AB01",
+    "aliases": [
+      "吲哚美辛",
+      "消炎痛"
+    ],
+    "cross_group": "nsaid"
+  },
+  {
+    "normalized_name": "ketorolac",
+    "atc_code": "M01AB15",
+    "aliases": [
+      "酮咯酸",
+      "痛力克"
+    ],
+    "cross_group": "nsaid"
+  },
+  {
+    "normalized_name": "meloxicam",
+    "atc_code": "M01AC06",
+    "aliases": [
+      "美洛昔康",
+      "莫比可"
+    ],
+    "cross_group": "nsaid"
+  },
+  {
+    "normalized_name": "celecoxib",
+    "atc_code": "M01AH01",
+    "aliases": [
+      "塞来昔布",
+      "西乐葆"
+    ],
+    "cross_group": "nsaid"
+  },
+  {
+    "normalized_name": "sulfamethoxazole",
+    "atc_code": "J01EC01",
+    "aliases": [
+      "磺胺甲噁唑",
+      "磺胺甲基异噁唑",
+      "新诺明"
+    ],
+    "cross_group": "sulfonamide"
+  },
+  {
+    "normalized_name": "co_trimoxazole",
+    "atc_code": "J01EE01",
+    "aliases": [
+      "复方新诺明",
+      "甲氧苄啶磺胺甲噁唑",
+      "cotrimoxazole"
+    ],
+    "cross_group": "sulfonamide"
+  },
+  {
+    "normalized_name": "sulfasalazine",
+    "atc_code": "A07EC01",
+    "aliases": [
+      "柳氮磺吡啶",
+      "柳氮磺胺吡啶"
+    ],
+    "cross_group": "sulfonamide"
+  },
+  {
     "normalized_name": "azithromycin",
     "atc_code": "J01FA10",
     "aliases": [
       "阿奇霉素",
       "希舒美"
+    ],
+    "cross_group": null
+  },
+  {
+    "normalized_name": "clarithromycin",
+    "atc_code": "J01FA09",
+    "aliases": [
+      "克拉霉素",
+      "克拉仙"
+    ],
+    "cross_group": null
+  },
+  {
+    "normalized_name": "erythromycin",
+    "atc_code": "J01FA01",
+    "aliases": [
+      "红霉素",
+      "利君沙"
+    ],
+    "cross_group": null
+  },
+  {
+    "normalized_name": "levofloxacin",
+    "atc_code": "J01MA12",
+    "aliases": [
+      "左氧氟沙星",
+      "可乐必妥"
+    ],
+    "cross_group": null
+  },
+  {
+    "normalized_name": "moxifloxacin",
+    "atc_code": "J01MA14",
+    "aliases": [
+      "莫西沙星",
+      "拜复乐"
+    ],
+    "cross_group": null
+  },
+  {
+    "normalized_name": "paracetamol",
+    "atc_code": "N02BE01",
+    "aliases": [
+      "对乙酰氨基酚",
+      "扑热息痛",
+      "泰诺林",
+      "acetaminophen"
+    ],
+    "cross_group": null
+  },
+  {
+    "normalized_name": "metformin",
+    "atc_code": "A10BA02",
+    "aliases": [
+      "二甲双胍",
+      "格华止"
     ],
     "cross_group": null
   }

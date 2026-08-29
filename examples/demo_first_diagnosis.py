@@ -192,7 +192,8 @@ def main() -> None:
     allergies = safety.allergy_store.get(PAT_PENICILLIN)
     for a in allergies:
         print(f"  过敏史: {a.drug_name_raw} → {a.normalized_drug} (ATC={a.atc_code})")
-        print(f"    交叉反应阻断: {', '.join(a.cross_reactants) or '（无）'}")
+        cross = sorted(a.cross_reactants)
+        print(f"    交叉反应阻断（{len(cross)} 条）: {', '.join(cross) or '（无）'}")
 
     obs = build_observability_stack(data_dir=".data/demo-m8-first")
     obs.tracer.bind("sess-first", "trace-first")

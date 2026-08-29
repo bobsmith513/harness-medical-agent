@@ -158,6 +158,12 @@ class HybridRetrievalService:
                 sibling = self._vector_store.get_chunk(sibling_id)
                 if sibling is None:
                     continue
+                # 分区隔离兜底：``get_chunk`` 是按 chunk_id 的全局直查
+                # （向量库 / BM25 两路均无 patient_id 条件），归属校验只能在
+                # 此完成——非本患者的 chunk 永不进入证据包，与向量检索侧
+                # "跨患者内容不是过滤后丢弃，而是从不读起"的语义保持一致。
+                if sibling.patient_id is not None and sibling.patient_id != query.patient_id:
+                    continue
                 seen_ids.add(sibling_id)
                 evidence.append(self._completion_evidence(sibling))
 

@@ -111,5 +111,5 @@ source = ["src/harness_agent"]
 branch = true
 
 [tool.coverage.report]
-# 覆盖率门禁：低于阈值 CI 失败（实测约 84%，留 4 个点余量防环境抖动）
+# 覆盖率门禁：低于阈值 CI 失败（零依赖实测 84.88%，留约 5 个点余量防环境抖动）
 fail_under = 80

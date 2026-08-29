@@ -3,7 +3,7 @@
 #
 # 适用场景：本地演示 / CI / 快速验证
 #   - 不连接任何外部服务（无 LLM / 无 Milvus / 无数据库）
-#   - 4 个端到端 demo + 5 个模块级 demo + 581 项测试全部可跑
+#   - 4 个端到端 demo + 5 个模块级 demo + 631 项测试全部可跑
 #
 # 安装：
 #   pip install -r requirements.txt

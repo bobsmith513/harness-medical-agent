@@ -9,7 +9,8 @@
 2. 装配闸门过滤 → 含过敏药物实体的证据被移除后放行；
 3. 全部证据被过滤 → 拒绝交付空证据包（fail-closed）；
 4. 患者分区隔离贯穿门面（查询只携带本患者分区 + 共享知识库）；
-5. 同父补全：sibling_ids 取回相邻 chunk，标记 is_structural_completion。
+5. 同父补全：sibling_ids 取回相邻 chunk，标记 is_structural_completion；
+   跨患者 chunk 永不补全（``get_chunk`` 无 patient_id 条件，校验在门面层）。
 """
 
 from __future__ import annotations
@@ -301,6 +302,45 @@ class TestSiblingCompletion:
         # 两个都是常规命中（非结构补全）
         assert all(not e.is_structural_completion for e in pack.evidence)
 
+    def test_same_patient_sibling_is_completed(self):
+        """本患者分区的 sibling 正常补全（隔离校验不得误伤）。"""
+        service = _service()
+        service.index(
+            [
+                _chunk("血糖监测目标范围", "kb-1", sibling_ids=["mem-a"], parent_id="doc-1"),
+                _chunk("本患者的既往病史摘要", "mem-a", patient_id=PAT_CLEAN, parent_id="doc-1"),
+            ]
+        )
+        pack = service.retrieve(_query("血糖 监测 目标", patient_id=PAT_CLEAN, top_k=1))
+        ids = [e.source.chunk_id for e in pack.evidence]
+        assert "kb-1" in ids
+        assert "mem-a" in ids
+
+    def test_cross_patient_sibling_never_enters_evidence(self):
+        """跨患者 sibling 永不进入证据包（分区隔离兜底）。
+
+        ``vector_store.get_chunk`` 是按 chunk_id 的全局直查，三处实现
+        （内存 / Milvus / BM25）均无 patient_id 条件，因此归属校验只能在
+        门面层完成——否则患者记忆可经 sibling 链泄漏给其他患者，绕过
+        "跨患者内容不是过滤后丢弃，而是从不读起"的隔离语义。
+        """
+        service = _service()
+        service.index(
+            [
+                _chunk("血糖监测目标范围", "kb-1", sibling_ids=["mem-b"], parent_id="doc-1"),
+                _chunk(
+                    "另一位患者的既往病史摘要",
+                    "mem-b",
+                    patient_id="pat-002",
+                    parent_id="doc-1",
+                ),
+            ]
+        )
+        pack = service.retrieve(_query("血糖 监测 目标", patient_id=PAT_CLEAN, top_k=1))
+        ids = [e.source.chunk_id for e in pack.evidence]
+        assert "kb-1" in ids  # 命中项本身照常交付
+        assert "mem-b" not in ids  # 跨患者内容不泄漏
+
 
 class TestRecallDepthFloor:
     """召回深度下限回归：query.top_k 大于配置深度时不得截断目标条目。
@@ -368,3 +408,16 @@ class TestWiringFactory:
         stack = build_retrieval_stack()
         # 门面持有的正是栈暴露的组件（替换即全局生效）
         assert stack.service._embedding_provider is stack.embedding_provider  # noqa: SLF001
+
+    def test_injected_safety_stack_is_reused(self):
+        """注入的安全栈必须被检索层复用——两端阻断口径一致的前提。"""
+        safety = build_safety_stack()
+        stack = build_retrieval_stack(safety=safety)
+        assert stack.safety is safety
+        assert stack.service._input_gate is safety.input_gate  # noqa: SLF001
+        assert stack.service._assembly_gate is safety.assembly_gate  # noqa: SLF001
+        assert stack.service._resolver is safety.resolver  # noqa: SLF001
+
+    def test_without_injection_each_stack_builds_its_own(self):
+        """未注入时各自新建（向后兼容，但两端口径可能分叉——故不推荐）。"""
+        assert build_retrieval_stack().safety is not build_retrieval_stack().safety

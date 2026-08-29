@@ -62,12 +62,21 @@ class SafetyStack:
     output_gate: DrugSafetyOutputGate
 
 
-def build_safety_stack(settings: Settings | None = None) -> SafetyStack:
+def build_safety_stack(
+    settings: Settings | None = None,
+    allergy_store: AllergyStore | None = None,
+) -> SafetyStack:
     """按配置装配安全层全家桶。
 
+    参数：
+        settings:      配置（None 时取全局配置）
+        allergy_store: 过敏史供给实现（None 时用合成种子）。
+                       **生产接入点**：对接 HIS / EMR 过敏史接口时实现
+                       ``AllergyStore`` 协议并在此注入，三道闸门自动换源，
+                       业务逻辑零分叉。
+
     词典路径（``HARNESS_SAFETY__DICTIONARY_PATH``）留空时使用内置
-    合成种子词典 + 种子过敏史（零依赖 demo）；生产环境填入完整
-    词典 JSON 路径即可，其余组件自动换源，逻辑零分叉。
+    合成种子词典（32 条）；生产环境填入完整词典 JSON 路径即可。
     """
     if settings is None:
         from harness_agent.config.settings import get_settings
@@ -80,7 +89,8 @@ def build_safety_stack(settings: Settings | None = None) -> SafetyStack:
         dictionary = DrugDictionary(SEED_DRUG_DICTIONARY)
     normalizer = DrugNormalizer(dictionary)
     atc = ATCService(dictionary)
-    allergy_store = InMemoryAllergyStore.with_seed_data(normalizer, atc)
+    if allergy_store is None:
+        allergy_store = InMemoryAllergyStore.with_seed_data(normalizer, atc)
     resolver = AllergyConflictResolver(atc, allergy_store)
     return SafetyStack(
         dictionary=dictionary,

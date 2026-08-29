@@ -38,19 +38,61 @@ class DrugEntry(BaseModel):
     cross_group: str | None = None
 
 
+#: 内置合成词典（零依赖默认，32 条）。
+#:
+#: 覆盖口径：``beta_lactam`` 13 条（青霉素类 + 一至四代头孢 + 碳青霉烯）、
+#: ``nsaid`` 8 条、``sulfonamide`` 3 条，以及 8 条无交叉组的阴性对照
+#: （大环内酯 / 喹诺酮 / 对乙酰氨基酚 / 二甲双胍）。
+#:
+#: 别名重叠的说明：``DrugNormalizer.find_mentions`` 按最长优先 + 占位扫描，
+#: 长别名会吃掉短别名的区间（``阿莫西林克拉维酸钾`` 吃掉 ``阿莫西林``、
+#: ``复方新诺明`` 吃掉 ``新诺明``、``氨苄青霉素`` 吃掉 ``青霉素``）。
+#: 这些重叠对**同组内**发生，阻断集合一致，因此不构成漏检缝——
+#: 扩词典时新增的长别名必须与它吃掉的短别名同组，否则会真的漏检。
 SEED_DRUG_DICTIONARY: list[DrugEntry] = [
-    # --- beta_lactam 组：青霉素类（2）+ 头孢类（1），演示直命中与类间交叉 ---
+    # ==== beta_lactam：青霉素类 + 头孢菌素类 + 碳青霉烯类（13 条）====
+    # 结构共性为 β-内酰胺环，青霉素过敏者使用头孢存在交叉过敏风险（fail-closed 全组阻断）。
     DrugEntry(
         normalized_name="penicillin",
         atc_code="J01CE01",
         cross_group="beta_lactam",
-        aliases=["青霉素", "盘尼西林", "benzylpenicillin"],
+        aliases=["青霉素", "盘尼西林", "苄青霉素", "benzylpenicillin"],
     ),
     DrugEntry(
         normalized_name="amoxicillin",
         atc_code="J01CA04",
         cross_group="beta_lactam",
-        aliases=["阿莫西林", "再林"],
+        aliases=["阿莫西林", "再林", "阿莫仙"],
+    ),
+    DrugEntry(
+        normalized_name="ampicillin",
+        atc_code="J01CA01",
+        cross_group="beta_lactam",
+        aliases=["氨苄西林", "氨苄青霉素"],
+    ),
+    DrugEntry(
+        normalized_name="piperacillin",
+        atc_code="J01CA12",
+        cross_group="beta_lactam",
+        aliases=["哌拉西林", "氧哌嗪青霉素"],
+    ),
+    DrugEntry(
+        normalized_name="amoxicillin_clavulanate",
+        atc_code="J01CR02",
+        cross_group="beta_lactam",
+        aliases=["阿莫西林克拉维酸钾", "安灭菌", "奥格门汀"],
+    ),
+    DrugEntry(
+        normalized_name="cefazolin",
+        atc_code="J01DB04",
+        cross_group="beta_lactam",
+        aliases=["头孢唑林", "先锋五号"],
+    ),
+    DrugEntry(
+        normalized_name="cefuroxime",
+        atc_code="J01DC02",
+        cross_group="beta_lactam",
+        aliases=["头孢呋辛", "西力欣"],
     ),
     DrugEntry(
         normalized_name="ceftriaxone",
@@ -58,12 +100,51 @@ SEED_DRUG_DICTIONARY: list[DrugEntry] = [
         cross_group="beta_lactam",
         aliases=["头孢曲松", "罗氏芬"],
     ),
-    # --- nsaid 组：2 条，演示交叉不耐受 ---
+    DrugEntry(
+        normalized_name="ceftazidime",
+        atc_code="J01DD02",
+        cross_group="beta_lactam",
+        aliases=["头孢他啶", "复达欣"],
+    ),
+    DrugEntry(
+        normalized_name="cefepime",
+        atc_code="J01DE01",
+        cross_group="beta_lactam",
+        aliases=["头孢吡肟", "马斯平"],
+    ),
+    DrugEntry(
+        normalized_name="meropenem",
+        atc_code="J01DH02",
+        cross_group="beta_lactam",
+        aliases=["美罗培南", "美平"],
+    ),
+    DrugEntry(
+        normalized_name="imipenem_cilastatin",
+        atc_code="J01DH51",
+        cross_group="beta_lactam",
+        aliases=["亚胺培南西司他丁", "泰能"],
+    ),
+    DrugEntry(
+        normalized_name="ertapenem",
+        atc_code="J01DH03",
+        cross_group="beta_lactam",
+        aliases=["厄他培南", "怡万之"],
+    ),
+    # ==== 单环 β-内酰胺：刻意不并入 beta_lactam（1 条）====
+    # 氨曲南与青霉素类交叉反应极低，临床视为青霉素过敏者的可安全替代；
+    # 并入 beta_lactam 会无谓误拦。ATC 前缀兜底同样排除 J01DF（见 atc.py）。
+    DrugEntry(
+        normalized_name="aztreonam",
+        atc_code="J01DF01",
+        aliases=["氨曲南", "君刻单"],
+    ),
+    # ==== nsaid：解热镇痛抗炎药（8 条）====
+    # 阿司匹林过敏 / 阿司匹林哮喘患者对其他 NSAID 存在交叉不耐受风险。
     DrugEntry(
         normalized_name="aspirin",
         atc_code="N02BA01",
         cross_group="nsaid",
-        aliases=["阿司匹林", "拜阿司匹灵"],
+        aliases=["阿司匹林", "拜阿司匹灵", "乙酰水杨酸"],
     ),
     DrugEntry(
         normalized_name="ibuprofen",
@@ -71,11 +152,100 @@ SEED_DRUG_DICTIONARY: list[DrugEntry] = [
         cross_group="nsaid",
         aliases=["布洛芬", "芬必得"],
     ),
-    # --- 无交叉组：阴性对照（青霉素过敏患者通常可用） ---
+    DrugEntry(
+        normalized_name="naproxen",
+        atc_code="M01AE02",
+        cross_group="nsaid",
+        aliases=["萘普生", "甲氧萘丙酸"],
+    ),
+    DrugEntry(
+        normalized_name="diclofenac",
+        atc_code="M01AB05",
+        cross_group="nsaid",
+        aliases=["双氯芬酸", "扶他林"],
+    ),
+    DrugEntry(
+        normalized_name="indomethacin",
+        atc_code="M01AB01",
+        cross_group="nsaid",
+        aliases=["吲哚美辛", "消炎痛"],
+    ),
+    DrugEntry(
+        normalized_name="ketorolac",
+        atc_code="M01AB15",
+        cross_group="nsaid",
+        aliases=["酮咯酸", "痛力克"],
+    ),
+    DrugEntry(
+        normalized_name="meloxicam",
+        atc_code="M01AC06",
+        cross_group="nsaid",
+        aliases=["美洛昔康", "莫比可"],
+    ),
+    DrugEntry(
+        normalized_name="celecoxib",
+        atc_code="M01AH01",
+        cross_group="nsaid",
+        aliases=["塞来昔布", "西乐葆"],
+    ),
+    # ==== sulfonamide：磺胺类（3 条）====
+    DrugEntry(
+        normalized_name="sulfamethoxazole",
+        atc_code="J01EC01",
+        cross_group="sulfonamide",
+        aliases=["磺胺甲噁唑", "磺胺甲基异噁唑", "新诺明"],
+    ),
+    DrugEntry(
+        normalized_name="co_trimoxazole",
+        atc_code="J01EE01",
+        cross_group="sulfonamide",
+        aliases=["复方新诺明", "甲氧苄啶磺胺甲噁唑", "cotrimoxazole"],
+    ),
+    DrugEntry(
+        normalized_name="sulfasalazine",
+        atc_code="A07EC01",
+        cross_group="sulfonamide",
+        aliases=["柳氮磺吡啶", "柳氮磺胺吡啶"],
+    ),
+    # ==== 无交叉组：阴性对照（8 条）====
+    # 大环内酯：β-内酰胺过敏患者的标准替代方案。
     DrugEntry(
         normalized_name="azithromycin",
         atc_code="J01FA10",
         aliases=["阿奇霉素", "希舒美"],
+    ),
+    DrugEntry(
+        normalized_name="clarithromycin",
+        atc_code="J01FA09",
+        aliases=["克拉霉素", "克拉仙"],
+    ),
+    DrugEntry(
+        normalized_name="erythromycin",
+        atc_code="J01FA01",
+        aliases=["红霉素", "利君沙"],
+    ),
+    # 喹诺酮：与 β-内酰胺无交叉，同为常用替代。
+    DrugEntry(
+        normalized_name="levofloxacin",
+        atc_code="J01MA12",
+        aliases=["左氧氟沙星", "可乐必妥"],
+    ),
+    DrugEntry(
+        normalized_name="moxifloxacin",
+        atc_code="J01MA14",
+        aliases=["莫西沙星", "拜复乐"],
+    ),
+    # 对乙酰氨基酚：非 NSAID（无明显抗炎作用），NSAID 不耐受者通常可用。
+    DrugEntry(
+        normalized_name="paracetamol",
+        atc_code="N02BE01",
+        aliases=["对乙酰氨基酚", "扑热息痛", "泰诺林", "acetaminophen"],
+    ),
+    # 双胍类降糖药：demo 复诊场景的稳定事实。
+    DrugEntry(
+        normalized_name="metformin",
+        atc_code="A10BA02",
+        aliases=["二甲双胍", "格华止"],
     ),
 ]
 

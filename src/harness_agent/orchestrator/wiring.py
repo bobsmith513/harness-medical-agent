@@ -25,7 +25,7 @@ from harness_agent.orchestrator.experts_config import (
 from harness_agent.orchestrator.planner import TaskPlanner
 from harness_agent.orchestrator.router import BinaryRouter, LLMRouter, RuleRouter
 from harness_agent.retrieval.wiring import build_retrieval_stack
-from harness_agent.safety import build_safety_stack
+from harness_agent.safety import SafetyStack, build_safety_stack
 
 __all__ = ["build_orchestrator"]
 
@@ -39,6 +39,7 @@ def build_orchestrator(
     experts_config_path: str | None = None,
     retrieval: RetrievalService | None = None,
     gate_pipeline: GatePipeline | None = None,
+    safety: SafetyStack | None = None,
 ) -> HarnessOrchestrator:
     """装配主 Agent（路由 + 规划 + 检索 + 专家绑定 + 门禁）。
 
@@ -50,6 +51,9 @@ def build_orchestrator(
         retrieval:           检索供给门面（默认新建 M3 栈；可注入共享实例）
         gate_pipeline:       门禁流水线（默认自动装配质量门禁 + 输出闸门；
                              传 None 跳过门禁——仅 M4 demo 场景）
+        safety:              安全栈（None 时新建）。**共享注入点**——应与
+                             检索层传入的是同一实例，否则输出闸门与检索
+                             闸门各持一份过敏史，"两端阻断口径一致"不成立。
     """
     if settings is None:
         settings = get_settings()
@@ -71,7 +75,8 @@ def build_orchestrator(
 
     # 门禁流水线（M5：质量门禁 + 输出闸门；默认自动装配）
     if gate_pipeline is None:
-        safety = build_safety_stack(settings)
+        # 与检索层共用同一份安全栈：两端阻断口径必须一致
+        safety = safety if safety is not None else build_safety_stack(settings)
         judge_llm = judge_llm if judge_llm is not None else MockLLMClient(role="judge")
         gate_pipeline = GatePipeline(
             quality_gate=LLMJudgeGate(llm=judge_llm),
