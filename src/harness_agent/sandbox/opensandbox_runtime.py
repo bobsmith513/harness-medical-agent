@@ -2,12 +2,9 @@
 
 服务地址在 M0 配置 ``HARNESS_SANDBOX__OPENSANDBOX_URL`` 中留空即不可用。
 本类是**适配骨架**——实现了 ``SandboxRuntime`` 接口的完整方法签名，
-但 ``execute`` / ``save_checkpoint`` / ``restore`` 在地址留空时
-返回降级结果（不连真实服务），生产部署填写地址后由 MCP 协议透明代理。
-
-透明代理句柄语义：
-- 沙箱实例句柄通过 MCP 协议获取，实例回收/重调度时句柄不变；
-- 检查点保存到 OpenSandbox 的持久卷，恢复时按 checkpoint_id 重建上下文。
+但 ``execute`` 的真实 MCP 调用尚未实现（规划中），当前所有路径
+均 fail-closed：地址留空返回降级错误，地址填写返回"未实现"错误。
+生产部署需补全 MCP 协议调用后移除 fail-closed 占位。
 """
 
 from __future__ import annotations
@@ -63,11 +60,11 @@ class OpenSandboxRuntime:
                     "请使用 MockRuntime 或填写服务地址"
                 ),
             )
-        # 骨架：真实部署时通过 MCP 协议调用
+        # 适配器未实现真实调用（规划中）：fail-closed，不假装成功
         return ExecutionResult(
-            exit_code=0,
-            stdout="[OpenSandbox 骨架] 真实部署时通过 MCP 协议执行",
-            stderr="",
+            exit_code=-1,
+            stdout="",
+            stderr="OpenSandbox 适配器未实现真实 MCP 调用（规划中），请使用 MockRuntime",
         )
 
     def save_checkpoint(self, session_id: str, state: dict[str, str]) -> Checkpoint:
@@ -81,9 +78,3 @@ class OpenSandboxRuntime:
         sid = checkpoint.session_id
         self._checkpoints.setdefault(sid, {})[checkpoint.checkpoint_id] = checkpoint
         return True
-
-    def _get_or_create_handle(self, session_id: str) -> str:
-        """获取或创建沙箱实例句柄（透明代理核心）。"""
-        if session_id not in self._handles:
-            self._handles[session_id] = f"sbx-{session_id[:8]}"
-        return self._handles[session_id]

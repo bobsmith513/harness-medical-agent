@@ -142,14 +142,13 @@ class TestOpenSandboxRuntime:
         runtime = OpenSandboxRuntime(service_url="")
         assert runtime.backend == "opensandbox"
 
-    def test_with_url_still_skeleton(self):
-        """填写地址但无 SDK → execute 返回骨架结果。"""
+    def test_with_url_returns_not_implemented(self):
+        """填写地址但适配器未实现 → fail-closed（exit_code=-1）。"""
         runtime = OpenSandboxRuntime(service_url="http://fake:8080")
         assert runtime.available is True
-        # 骨架模式：不真正连接服务
         result = runtime.execute("print('test')")
-        assert result.exit_code == 0
-        assert "骨架" in result.stdout
+        assert result.exit_code == -1
+        assert "未实现" in result.stderr
 
 
 class TestBuildSandboxRuntime:

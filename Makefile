@@ -19,7 +19,7 @@ test: ## 运行全部测试
 	uv run pytest
 
 cov: ## 运行测试并输出覆盖率
-	uv run pytest --cov=harness_agent --cov-report=term-missing
+	uv run pytest --cov --cov-report=term-missing
 
 clean: ## 清理缓存与本地数据
 	rm -rf .pytest_cache .ruff_cache .coverage htmlcov .data dist build

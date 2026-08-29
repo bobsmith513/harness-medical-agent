@@ -55,7 +55,7 @@ class SQLiteAuditStore:
             verdict_json = record.verdict.model_dump_json()
 
         self._conn.execute(
-            "INSERT OR REPLACE INTO audit_records "
+            "INSERT INTO audit_records "
             "(audit_id, trace_id, session_id, turn_index, actor, action, "
             "verdict_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
@@ -117,86 +117,82 @@ class PostgresAuditStore:
     真实部署需安装 psycopg：
         pip install "psycopg[binary]"
 
-    未安装时自动降级为进程内列表存储（不丢失审计记录）。
+    DSN 填写但 psycopg 未安装时启动报错（对齐 design-decisions 降级承诺）——
+    审计记录不可静默降级为内存存储（进程退出全丢，合规风险）。
     """
 
     def __init__(self, dsn: str = "") -> None:
         self._dsn = dsn
         self._conn = None
-        self._fallback: list[AuditRecord] = []
 
         if dsn:
             try:
                 import psycopg  # type: ignore[import-untyped]
-
-                self._conn = psycopg.connect(dsn)
-                self._conn.execute(_CREATE_TABLE)
-                self._conn.commit()
-            except ImportError:
-                # psycopg 未安装 → 进程内降级
-                pass
+            except ImportError as exc:
+                raise ImportError(
+                    'psycopg 未安装：pip install "psycopg[binary]" 后重试，'
+                    "或清空 DSN 使用 SQLiteAuditStore（零依赖默认）"
+                ) from exc
+            self._conn = psycopg.connect(dsn)
+            self._conn.execute(_CREATE_TABLE)
+            self._conn.commit()
 
     def append(self, record: AuditRecord) -> None:
-        if self._conn is not None:
-            verdict_json = ""
-            if record.verdict is not None:
-                verdict_json = record.verdict.model_dump_json()
-            self._conn.execute(
-                "INSERT INTO audit_records "
-                "(audit_id, trace_id, session_id, turn_index, actor, action, "
-                "verdict_json, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                (
-                    record.audit_id,
-                    record.trace_id,
-                    record.session_id,
-                    record.turn_index,
-                    record.actor,
-                    record.action,
-                    verdict_json,
-                    record.created_at.isoformat(),
-                ),
-            )
-            self._conn.commit()
-        else:
-            self._fallback.append(record)
+        verdict_json = ""
+        if record.verdict is not None:
+            verdict_json = record.verdict.model_dump_json()
+        self._conn.execute(
+            "INSERT INTO audit_records "
+            "(audit_id, trace_id, session_id, turn_index, actor, action, "
+            "verdict_json, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                record.audit_id,
+                record.trace_id,
+                record.session_id,
+                record.turn_index,
+                record.actor,
+                record.action,
+                verdict_json,
+                record.created_at.isoformat(),
+            ),
+        )
+        self._conn.commit()
 
     def query(self, session_id: str) -> list[AuditRecord]:
-        if self._conn is not None:
-            cursor = self._conn.execute(
-                "SELECT audit_id, trace_id, session_id, turn_index, actor, "
-                "action, verdict_json, created_at FROM audit_records "
-                "WHERE session_id = %s ORDER BY created_at",
-                (session_id,),
-            )
-            rows = cursor.fetchall()
-            records: list[AuditRecord] = []
-            for row in rows:
-                verdict = None
-                if row[6]:
-                    from harness_agent.models.audit import GateVerdict
+        cursor = self._conn.execute(
+            "SELECT audit_id, trace_id, session_id, turn_index, actor, "
+            "action, verdict_json, created_at FROM audit_records "
+            "WHERE session_id = %s ORDER BY created_at",
+            (session_id,),
+        )
+        rows = cursor.fetchall()
+        records: list[AuditRecord] = []
+        for row in rows:
+            verdict = None
+            if row[6]:
+                from harness_agent.models.audit import GateVerdict
 
-                    verdict = GateVerdict.model_validate_json(row[6])
-                records.append(
-                    AuditRecord(
-                        audit_id=row[0],
-                        trace_id=row[1],
-                        session_id=row[2],
-                        turn_index=row[3],
-                        actor=row[4],
-                        action=row[5],
-                        verdict=verdict,
-                        created_at=datetime.fromisoformat(row[7]),
-                    )
+                verdict = GateVerdict.model_validate_json(row[6])
+            records.append(
+                AuditRecord(
+                    audit_id=row[0],
+                    trace_id=row[1],
+                    session_id=row[2],
+                    turn_index=row[3],
+                    actor=row[4],
+                    action=row[5],
+                    verdict=verdict,
+                    created_at=datetime.fromisoformat(row[7]),
                 )
-            return records
-        return [r for r in self._fallback if r.session_id == session_id]
+            )
+        return records
 
 
 def build_audit_store(dsn: str = "", data_dir: str = ".data") -> AuditStore:
     """按配置装配审计存储。
 
     DSN 留空时返回 SQLiteAuditStore（零依赖默认）；
-    填写时返回 PostgresAuditStore（psycopg 未安装自动降级）。
+    填写时返回 PostgresAuditStore（需安装 psycopg，否则启动报错）。
     """
     if not dsn:
         return SQLiteAuditStore(data_dir=data_dir)

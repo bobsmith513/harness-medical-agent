@@ -14,13 +14,10 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from typing import Literal
 
 from harness_agent.contracts.sandbox import Checkpoint, ExecutionResult
 
 __all__ = ["MockRuntime"]
-
-_Backend = Literal["mock", "opensandbox"]
 
 
 class MockRuntime:
@@ -31,7 +28,7 @@ class MockRuntime:
     - ``save_checkpoint`` / ``restore`` 进程内字典存储，模拟中断恢复。
     """
 
-    backend: _Backend = "mock"
+    backend: str = "mock"
 
     def __init__(self) -> None:
         # session_id → {checkpoint_id → Checkpoint}
@@ -87,15 +84,9 @@ class MockRuntime:
         return cp
 
     def restore(self, checkpoint: Checkpoint) -> bool:
-        """恢复检查点（验证存在性，返回是否成功）。"""
-        session_cps = self._checkpoints.get(checkpoint.session_id, {})
-        if checkpoint.checkpoint_id in session_cps:
-            # 更新存储的检查点（模拟恢复后状态同步）
-            session_cps[checkpoint.checkpoint_id] = checkpoint
-            return True
-        # 外部检查点（非本进程创建）也可恢复——模拟 OpenSandbox 重调度
-        session_cps = self._checkpoints.setdefault(checkpoint.session_id, {})
-        session_cps[checkpoint.checkpoint_id] = checkpoint
+        """恢复检查点（进程内字典存储，模拟中断恢复）。"""
+        sid = checkpoint.session_id
+        self._checkpoints.setdefault(sid, {})[checkpoint.checkpoint_id] = checkpoint
         return True
 
     def get_checkpoint(self, session_id: str, checkpoint_id: str) -> Checkpoint | None:

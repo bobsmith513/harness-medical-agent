@@ -204,9 +204,9 @@ class TestBuildVfsStore:
             assert isinstance(store, FileBackedVfsStore)
 
     def test_unwritable_root_falls_back_to_memory(self):
-        store = build_vfs_store("/nonexistent/path/that/does/not/exist")
-        # 降级为内存存储
-        assert isinstance(store, (InMemoryVfsStore, FileBackedVfsStore))
+        # /dev/null 是文件而非目录，makedirs 必然失败 → 降级内存
+        store = build_vfs_store("/dev/null/not_a_directory")
+        assert isinstance(store, InMemoryVfsStore)
 
 
 # ===========================================================================
@@ -349,6 +349,21 @@ class TestContextCompaction:
         assert "provenance" in data
         assert data["confidence"] in ("high", "medium", "low")
         assert data["provenance"] in ("knowledge_base", "model_inference", "doctor_verified")
+
+    def test_summary_contains_patient_id(self):
+        """摘要必须带 patient_id（记忆审核队列据此分区，防 unknown 兜底）。"""
+        compactor = build_compactor("sess-1")
+        context = SessionContext(patient_id="pat-1", session_id="sess-1")
+
+        compactor.compact_turn(_turn(1), context)
+        data = json.loads(compactor.directory.read("/summaries/summary-turn-1.json"))
+        assert data["patient_id"] == "pat-1"
+
+        # 上下文缺 patient_id 时兜底到证据包（而非 unknown 分区）
+        context_no_pid = SessionContext(patient_id="", session_id="sess-1")
+        compactor.compact_turn(_turn(2), context_no_pid, evidence_pack=_evidence_pack())
+        data2 = json.loads(compactor.directory.read("/summaries/summary-turn-2.json"))
+        assert data2["patient_id"] == "pat-1"
 
 
 # ===========================================================================
@@ -803,9 +818,9 @@ class TestCompactionToReviewE2E:
         assert summary_json is not None
         summary = json.loads(summary_json)
 
-        # 提交到审核队列
+        # 提交到审核队列（摘要原生含 patient_id，无需手工补字段）
         queue = MemoryReviewQueue(directory=compactor.directory)
-        memory = queue.submit_from_summary({**summary, "patient_id": "pat-1"})
+        memory = queue.submit_from_summary(summary)
         assert memory.status == "pending_review"
         assert queue.get_recallable("pat-1") == []  # 未审核不可召回
 
@@ -841,10 +856,10 @@ class TestCompactionToReviewE2E:
         turn = _turn(1)
         compactor.compact_turn(turn, context, evidence_pack=pack)
 
-        # 读取摘要 → 提交 → 自动审核
+        # 读取摘要 → 提交（摘要原生含 patient_id） → 自动审核
         summary = json.loads(compactor.directory.read("/summaries/summary-turn-1.json"))
         queue = MemoryReviewQueue(directory=compactor.directory)
-        queue.submit_from_summary({**summary, "patient_id": "pat-1"})
+        queue.submit_from_summary(summary)
         results = queue.auto_review()
 
         assert len(results) == 1

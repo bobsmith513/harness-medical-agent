@@ -185,7 +185,12 @@ class LLMJudgeGate:
         )
 
     def _build_verdict(self, verdict: dict) -> GateVerdict:
-        """根据 judge 输出构造裁决（字段缺失/类型异常按拦截处理）。"""
+        """根据 judge 输出构造裁决（字段缺失/类型异常按拦截处理）。
+
+        三个关键字段任一缺失或类型异常（``faithfulness`` 非数值、
+        布尔标志缺失）均拦截——臆测/因果倒置标志缺失时无法证明
+        "无臆测"，按 fail-closed 语义不得放行。
+        """
         faithfulness = self._safe_float(verdict.get("faithfulness"))
         has_hallucination = self._safe_bool(verdict.get("has_hallucination"))
         causal_inversion = self._safe_bool(verdict.get("causal_inversion"))
@@ -196,6 +201,18 @@ class LLMJudgeGate:
                 gate="quality_judge",
                 allowed=False,
                 reason=f"LLM-judge 拦截：忠实度字段缺失或非数值（{reason}）",
+            )
+        if has_hallucination is None:
+            return GateVerdict(
+                gate="quality_judge",
+                allowed=False,
+                reason=f"LLM-judge 拦截：臆测标志字段缺失或类型异常（{reason}）",
+            )
+        if causal_inversion is None:
+            return GateVerdict(
+                gate="quality_judge",
+                allowed=False,
+                reason=f"LLM-judge 拦截：因果倒置标志字段缺失或类型异常（{reason}）",
             )
         if has_hallucination:
             return GateVerdict(
@@ -236,10 +253,14 @@ class LLMJudgeGate:
         return None
 
     @staticmethod
-    def _safe_bool(value: object) -> bool:
-        """布尔解析：字符串 'false'/'False' 按假处理（bool('false') 为真的陷阱）。"""
+    def _safe_bool(value: object) -> bool | None:
+        """布尔解析：字符串 'true'/'false' 按字面处理（bool('false') 为真的陷阱）。
+
+        缺失（None）或非布尔/字符串类型（数字、列表等）返回 None
+        → 拦截：标志缺失时无法证明"无臆测"，fail-closed 不放行。
+        """
         if isinstance(value, bool):
             return value
         if isinstance(value, str):
             return value.strip().lower() == "true"
-        return False
+        return None

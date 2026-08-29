@@ -24,11 +24,11 @@ LLM 调用默认 Mock（脚本化应答，零外部依赖）；端点配置后�
 from __future__ import annotations
 
 import json
-import re
 
 from harness_agent.contracts.experts import ExpertTask
 from harness_agent.contracts.llm import LLMClient, LLMMessage
 from harness_agent.contracts.retrieval import RetrievalService
+from harness_agent.llm.json_utils import extract_json_object
 from harness_agent.models.evidence import EvidencePack
 from harness_agent.models.reasoning import (
     ClinicalConclusion,
@@ -147,21 +147,19 @@ class ReasoningExpertImpl:
 
     @staticmethod
     def _parse_output(text: str, evidence: EvidencePack) -> dict:
-        """从 LLM 输出解析 JSON（容错：剥离 markdown 围栏）。
+        """从 LLM 输出解析 JSON（容错：剥离 markdown 围栏 + 括号深度扫描）。
 
         fail-closed：无 JSON 或解析失败时抛异常（由编排层捕获转升级），
         绝不构造"兜底结论"——与患者问题无关的罐头结论正是本系统
         承诺绝不交付的东西。
         """
-        cleaned = re.sub(r"```(?:json)?|```", "", text).strip()
-        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
-        if not match:
+        fragment = extract_json_object(text)
+        if fragment is None:
             raise ValueError(
-                f"LLM 输出不含 JSON（长度 {len(cleaned)} 字符），"
-                "无法解析为推理链——fail-closed 转人工"
+                f"LLM 输出不含 JSON（长度 {len(text)} 字符），无法解析为推理链——fail-closed 转人工"
             )
         try:
-            parsed = json.loads(match.group(0))
+            parsed = json.loads(fragment)
         except json.JSONDecodeError as exc:
             raise ValueError(f"LLM 输出 JSON 解析失败: {exc}") from exc
         if not isinstance(parsed, dict):
@@ -205,10 +203,12 @@ class ReasoningExpertImpl:
         if "inference" not in kinds:
             issues.append("推理链必须包含推断步")
 
-        # 3. 依据充分性：结论步引用 ⊆ 链引用集合
+        # 3. 依据充分性：结论步引用 ⊆ 结论步之前各步的引用集合
         conclusion_step = chain.steps[-1]
-        chain_cited = set(chain.cited_evidence_ids)
-        extra = set(conclusion_step.citations) - chain_cited
+        prior_cited: set[str] = set()
+        for step in chain.steps[:-1]:
+            prior_cited.update(step.citations)
+        extra = set(conclusion_step.citations) - prior_cited
         if extra:
             issues.append(f"结论步引用了推理链未引用的证据: {sorted(extra)}")
 

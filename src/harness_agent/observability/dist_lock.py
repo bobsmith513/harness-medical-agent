@@ -62,7 +62,7 @@ class RedisLock:
     真实部署需安装 redis：
         pip install redis
 
-    未安装时自动降级为进程内 MemoryLock。
+    URL 填写但 redis 包未安装时启动报错（对齐 design-decisions 降级承诺）。
     """
 
     def __init__(self, url: str = "") -> None:
@@ -88,7 +88,7 @@ def build_dist_lock(redis_url: str = "") -> DistLock:
     """按配置装配分布式锁。
 
     Redis URL 留空时返回 MemoryLock（零依赖默认）；
-    填写时返回 RedisLock（redis 包未安装自动降级）。
+    填写时返回 RedisLock（需安装 redis，否则启动报错）。
     """
     if not redis_url:
         return MemoryLock()

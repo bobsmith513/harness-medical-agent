@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import sys
 import time
+import types
 
 import pytest
 
@@ -44,6 +45,36 @@ from harness_agent.observability import (
     build_observability_stack,
     build_tracer,
 )
+
+
+# ===========================================================================
+# 测试辅助：可选依赖的模块替身
+# ===========================================================================
+def _fake_redis_module() -> types.ModuleType:
+    """redis 模块替身：``from_url`` 返回哑客户端（不发起真实连接）。
+
+    环境无关地验证「URL 填写 → Redis 实现」的工厂选择逻辑：
+    无论本机是否安装 redis，测试都真实运行且不发起网络调用
+    （避免 ``importorskip`` 在未装 redis 的环境里静默跳过）。
+    """
+    module = types.ModuleType("redis")
+    module.from_url = lambda url: object()  # type: ignore[attr-defined]
+    return module
+
+
+def _fake_psycopg_module() -> types.ModuleType:
+    """psycopg 模块替身：``connect`` 返回哑连接（execute/commit 为 no-op）。"""
+
+    class _FakeConn:
+        def execute(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+        def commit(self) -> None:
+            return None
+
+    module = types.ModuleType("psycopg")
+    module.connect = lambda dsn: _FakeConn()  # type: ignore[attr-defined]
+    return module
 
 
 # ===========================================================================
@@ -100,7 +131,7 @@ class TestPatternDesensitizer:
 
     def test_desensitize_multiple_pii(self):
         """多种 PII 混合脱敏。"""
-        text = "患者张三，身份证 310101199001011234，电话 13812345678，邮箱 zhangsan@hospital.com"
+        text = "患者：张三，身份证 310101199001011234，电话 13812345678，邮箱 zhangsan@hospital.com"
         result = self.desensitizer.desensitize(text)
         assert "张三" not in result.text
         assert "310101199001011234" not in result.text
@@ -128,6 +159,7 @@ class TestPatternDesensitizer:
                 "id": "310101199001011234",
                 "note": "无 PII",
             },
+            "contacts": ["联系电话 13812345678", "无 PII 文本"],
         }
         result = self.desensitizer.desensitize_dict(data)
         assert "李四" not in result["patient_info"]
@@ -136,10 +168,63 @@ class TestPatternDesensitizer:
         assert "[REDACTED-ID]" in result["nested"]["id"]
         assert result["diagnosis"] == "上呼吸道感染"
         assert result["nested"]["note"] == "无 PII"
+        assert "[REDACTED-PHONE]" in result["contacts"][0]
+        assert result["contacts"][1] == "无 PII 文本"
+
+    def test_clinical_text_not_destroyed(self):
+        """临床正文不被姓名正则误伤（回归测试）。
+
+        旧正则 ``患者[汉字]{2,4}(?=[标点])`` 会把"患者咳嗽三天，"
+        整段替换为 [REDACTED-NAME]，破坏证据文本。
+        """
+        clinical_texts = [
+            "患者咳嗽三天，发烧38.5度",
+            "患者主诉头痛，伴恶心",
+            "患者既往有高血压病史",
+            "患者否认药物过敏史",
+        ]
+        for text in clinical_texts:
+            result = self.desensitizer.desensitize(text)
+            assert "[REDACTED-NAME]" not in result.text, f"临床正文被误脱敏: {text}"
+            assert result.text == text, f"临床正文被修改: {text}"
+
+    def test_patient_name_with_marker_redacted(self):
+        """显式标记式姓名（患者：xxx）正常脱敏。"""
+        text = "患者：赵六，诊断为感冒"
+        result = self.desensitizer.desensitize(text)
+        assert "赵六" not in result.text
+        assert "[REDACTED-NAME]" in result.text
+
+    def test_id_glued_to_chinese_redacted(self):
+        """身份证号紧贴中文（无空格）也必须命中（词边界回归测试）。
+
+        旧正则用 ``\\b`` 词边界——Python 正则中中文同属 ``\\w``，
+        中文与数字之间不构成词边界，"身份证310101…" 会静默漏过。
+        """
+        result = self.desensitizer.desensitize("我身份证310101199001011234发烧三天")
+        assert "310101199001011234" not in result.text
+        assert "[REDACTED-ID]" in result.text
+
+    def test_phone_glued_to_chinese_redacted(self):
+        """手机号紧贴中文（无空格）也必须命中（词边界回归测试）。"""
+        result = self.desensitizer.desensitize("电话13812345678尽快回电")
+        assert "13812345678" not in result.text
+        assert "[REDACTED-PHONE]" in result.text
+
+    def test_patid_glued_to_chinese_redacted(self):
+        """患者编号紧贴中文（无空格）也必须命中（词边界回归测试）。"""
+        result = self.desensitizer.desensitize("患者编号pat-abc12345就诊中")
+        assert "pat-abc12345" not in result.text
+        assert "[REDACTED-PATID]" in result.text
+
+    def test_long_digit_run_not_partially_matched(self):
+        """长数字串不截断误报：12 位数字串不应命中 11 位手机号规则。"""
+        result = self.desensitizer.desensitize("编号 138123456789 请核对")
+        assert "[REDACTED-PHONE]" not in result.text
 
     def test_before_after_comparison(self):
         """验收：脱敏前后对照样例。"""
-        original = "患者李芳，身份证 420101198503156789，电话 13712345678"
+        original = "患者：李芳，身份证 420101198503156789，电话 13712345678"
         result = self.desensitizer.desensitize(original)
         # 原文保留 PII
         assert "李芳" in original
@@ -226,15 +311,14 @@ class TestLangfuseTracer:
         tracer.record(TraceEvent(trace_id="trace-1", event_type="test"))
         assert tracer._fallback.event_count == 1
 
-    def test_with_keys_but_no_sdk(self):
-        """有密钥但 SDK 未安装 → 降级为 Noop。"""
-        tracer = LangfuseTracer(
-            public_key="pk-test",
-            secret_key="sk-test",
-            host="https://fake.langfuse.com",
-        )
-        # langfuse 包未安装 → _client 为 None
-        assert tracer._client is None
+    def test_with_keys_but_no_sdk_raises(self):
+        """有密钥但 SDK 未安装 → 启动报错（对齐 design-decisions 降级承诺）。"""
+        with pytest.raises(ImportError, match="langfuse"):
+            LangfuseTracer(
+                public_key="pk-test",
+                secret_key="sk-test",
+                host="https://fake.langfuse.com",
+            )
 
 
 class TestBuildTracer:
@@ -244,9 +328,10 @@ class TestBuildTracer:
         tracer = build_tracer("", "", "")
         assert isinstance(tracer, NoopTracer)
 
-    def test_with_keys_returns_langfuse(self):
-        tracer = build_tracer("pk-test", "sk-test", "https://fake.langfuse.com")
-        assert isinstance(tracer, LangfuseTracer)
+    def test_with_keys_raises_without_sdk(self):
+        """有密钥但 langfuse 未安装 → raise ImportError。"""
+        with pytest.raises(ImportError, match="langfuse"):
+            build_tracer("pk-test", "sk-test", "https://fake.langfuse.com")
 
 
 # ===========================================================================
@@ -324,23 +409,21 @@ class TestBuildAuditStore:
         store = build_audit_store("", str(tmp_path))
         assert isinstance(store, SQLiteAuditStore)
 
-    def test_with_dsn_returns_postgres(self):
+    def test_with_dsn_returns_postgres(self, monkeypatch):
+        """DSN 填写 → PostgresAuditStore（注入 psycopg 替身，不发起真实连接）。"""
+        monkeypatch.setitem(sys.modules, "psycopg", _fake_psycopg_module())
         store = build_audit_store("postgresql://fake")
         assert isinstance(store, PostgresAuditStore)
 
-    def test_postgres_without_sdk_falls_back(self):
-        """Postgres DSN 但 psycopg 未安装 → 进程内降级。"""
-        store = PostgresAuditStore(dsn="postgresql://fake")
-        store.append(
-            AuditRecord(
-                trace_id="t1",
-                session_id="s1",
-                actor="a",
-                action="b",
-            )
-        )
-        results = store.query("s1")
-        assert len(results) == 1
+    def test_postgres_without_sdk_raises(self, monkeypatch):
+        """Postgres DSN 但 psycopg 未安装 → 启动报错（不静默降级）。
+
+        环境无关写法：``sys.modules["psycopg"] = None`` 强制
+        ``import psycopg`` 抛 ImportError，任何环境下都不发起真实连接。
+        """
+        monkeypatch.setitem(sys.modules, "psycopg", None)
+        with pytest.raises(ImportError, match="psycopg"):
+            PostgresAuditStore(dsn="postgresql://fake")
 
 
 # ===========================================================================
@@ -361,9 +444,9 @@ class TestMemoryCacheStore:
     def test_set_with_ttl(self):
         """TTL 过期测试。"""
         cache = MemoryCacheStore()
-        cache.set("key1", "value1", ttl_s=1)
+        cache.set("key1", "value1", ttl_s=0.1)
         assert cache.get("key1") == "value1"
-        time.sleep(1.1)
+        time.sleep(0.15)
         assert cache.get("key1") is None
 
     def test_set_with_short_ttl(self):
@@ -371,7 +454,7 @@ class TestMemoryCacheStore:
         cache = MemoryCacheStore()
         cache.set("key1", "value1", ttl_s=0)
         # ttl_s=0 意味着立即过期
-        assert cache.get("key1") is None or cache.get("key1") == "value1"
+        assert cache.get("key1") is None
 
     def test_delete(self):
         cache = MemoryCacheStore()
@@ -404,21 +487,21 @@ class TestBuildCacheStore:
         store = build_cache_store("")
         assert isinstance(store, MemoryCacheStore)
 
-    def test_with_url_returns_redis(self):
+    def test_with_url_returns_redis(self, monkeypatch):
+        """URL 填写 → RedisCacheStore（注入 redis 替身，不发起真实连接）。"""
+        monkeypatch.setitem(sys.modules, "redis", _fake_redis_module())
         store = build_cache_store("redis://localhost:6379")
         assert isinstance(store, RedisCacheStore)
 
-    def test_redis_without_sdk_falls_back(self, monkeypatch):
-        """Redis URL 但 redis 包未安装 → 降级为 Memory。
+    def test_redis_without_sdk_raises(self, monkeypatch):
+        """Redis URL 但 redis 包未安装 → 启动报错（不静默降级）。
 
         环境无关写法：把 sys.modules["redis"] 置 None，令构造函数里的
-        ``import redis`` 必然抛 ImportError——无论本机是否安装 redis、
-        是否有 Redis 服务在跑，都走同一条降级断言路径，不会发起真实连接。
+        ``import redis`` 必然抛 ImportError——无论本机是否安装 redis。
         """
         monkeypatch.setitem(sys.modules, "redis", None)
-        store = RedisCacheStore(url="redis://localhost:6379")
-        store.set("k", "v")
-        assert store.get("k") == "v"  # 降级到 MemoryCacheStore
+        with pytest.raises(ImportError, match="redis"):
+            RedisCacheStore(url="redis://localhost:6379")
 
 
 class TestRedisCacheStoreInterfaceAlignment:
@@ -427,25 +510,6 @@ class TestRedisCacheStoreInterfaceAlignment:
     旧实现缺 delete/clear/size（消费方换实现时接口不对齐）；
     整改后降级路径下五个方法全部转发内存实现。
     """
-
-    @pytest.fixture
-    def degraded_store(self, monkeypatch) -> RedisCacheStore:
-        monkeypatch.setitem(sys.modules, "redis", None)
-        return RedisCacheStore(url="redis://localhost:6379")
-
-    def test_delete(self, degraded_store):
-        degraded_store.set("k", "v")
-        assert degraded_store.delete("k") is True
-        assert degraded_store.delete("k") is False  # 已删：不存在
-        assert degraded_store.get("k") is None
-
-    def test_clear_and_size(self, degraded_store):
-        degraded_store.set("k1", "v1")
-        degraded_store.set("k2", "v2")
-        assert degraded_store.size == 2
-        degraded_store.clear()
-        assert degraded_store.size == 0
-        assert degraded_store.get("k1") is None
 
     def test_full_interface_matches_memory(self):
         """两实现方法集一致（get/set/delete/clear/size）。"""
@@ -503,20 +567,21 @@ class TestBuildDistLock:
         lock = build_dist_lock("")
         assert isinstance(lock, MemoryLock)
 
-    def test_with_url_returns_redis(self):
+    def test_with_url_returns_redis(self, monkeypatch):
+        """URL 填写 → RedisLock（注入 redis 替身，不发起真实连接）。"""
+        monkeypatch.setitem(sys.modules, "redis", _fake_redis_module())
         lock = build_dist_lock("redis://localhost:6379")
         assert isinstance(lock, RedisLock)
 
-    def test_redis_without_sdk_falls_back(self, monkeypatch):
-        """Redis URL 但 redis 包未安装 → 降级为进程内锁。
+    def test_redis_without_sdk_raises(self, monkeypatch):
+        """Redis URL 但 redis 包未安装 → 启动报错（不静默降级）。
 
         环境无关写法：同上，sys.modules["redis"]=None 强制 ImportError，
         任何环境下都不发起真实连接。
         """
         monkeypatch.setitem(sys.modules, "redis", None)
-        lock = RedisLock(url="redis://localhost:6379")
-        assert lock.acquire("key1", ttl_s=10) is True
-        assert lock.acquire("key1", ttl_s=10) is False  # 已锁定
+        with pytest.raises(ImportError, match="redis"):
+            RedisLock(url="redis://localhost:6379")
 
 
 # ===========================================================================
@@ -533,21 +598,23 @@ class TestBuildObservabilityStack:
         assert isinstance(stack.cache_store, MemoryCacheStore)
         assert isinstance(stack.dist_lock, MemoryLock)
 
-    def test_with_langfuse_keys(self, tmp_path):
-        stack = build_observability_stack(
-            langfuse_public_key="pk-test",
-            langfuse_secret_key="sk-test",
-            data_dir=str(tmp_path),
-        )
-        assert isinstance(stack.tracer, LangfuseTracer)
+    def test_with_langfuse_keys_raises(self, tmp_path):
+        """Langfuse 密钥填写但 SDK 未安装 → 启动报错。"""
+        with pytest.raises(ImportError, match="langfuse"):
+            build_observability_stack(
+                langfuse_public_key="pk-test",
+                langfuse_secret_key="sk-test",
+                data_dir=str(tmp_path),
+            )
 
-    def test_with_redis_url(self, tmp_path):
-        stack = build_observability_stack(
-            redis_url="redis://localhost:6379",
-            data_dir=str(tmp_path),
-        )
-        assert isinstance(stack.cache_store, RedisCacheStore)
-        assert isinstance(stack.dist_lock, RedisLock)
+    def test_with_redis_url_raises(self, tmp_path, monkeypatch):
+        """Redis URL 填写但 redis 未安装 → 启动报错。"""
+        monkeypatch.setitem(sys.modules, "redis", None)
+        with pytest.raises(ImportError, match="redis"):
+            build_observability_stack(
+                redis_url="redis://localhost:6379",
+                data_dir=str(tmp_path),
+            )
 
     def test_stack_components_work_together(self, tmp_path):
         """组件栈协同工作：trace → audit → cache → lock。"""
@@ -599,7 +666,7 @@ class TestAcceptanceCriteria:
         """验收：脱敏前后对照样例。"""
         desensitizer = PatternDesensitizer()
         original = (
-            "患者王明，身份证号 110101199003071234，"
+            "患者：王明，身份证号 110101199003071234，"
             "手机 13912345678，邮箱 wangming@hospital.cn，"
             "患者编号 pat-abc12345678"
         )

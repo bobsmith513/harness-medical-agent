@@ -134,8 +134,10 @@ class ContextCompactor:
             )
             context.file_pointers[f"reasoning:{turn.turn_index}"] = reasoning_path
 
-        # 3. 旧轮摘要（标注来源置信度，供记忆审核队列消费）
-        summary_data = self._build_summary(turn, evidence_pack, conclusion)
+        # 3. 旧轮摘要（标注患者分区 + 来源置信度，供记忆审核队列消费）
+        summary_data = self._build_summary(
+            turn, evidence_pack, conclusion, patient_id=context.patient_id
+        )
         summary_id = f"summary-turn-{turn.turn_index}"
         summary_path = self._directory.write_summary(summary_id, summary_data)
         context.file_pointers[f"summary:{turn.turn_index}"] = summary_path
@@ -187,8 +189,17 @@ class ContextCompactor:
         turn: TurnRecord,
         evidence_pack: EvidencePack | None,
         conclusion: ClinicalConclusion | None,
+        patient_id: str = "",
     ) -> dict:
-        """构造旧轮摘要（标注来源置信度，供记忆审核消费）。"""
+        """构造旧轮摘要（标注患者分区 + 来源置信度，供记忆审核消费）。
+
+        ``patient_id`` 优先取会话上下文，兜底证据包——摘要缺此字段时
+        ``MemoryReviewQueue.submit_from_summary`` 会落到 ``unknown``
+        分区，记忆转正后无法按患者隔离召回。
+        """
+        resolved_patient = patient_id or (
+            evidence_pack.patient_id if evidence_pack is not None else ""
+        )
         evidence_summary = ""
         confidence = "low"
         provenance = "model_inference"
@@ -208,6 +219,7 @@ class ContextCompactor:
 
         return {
             "turn_index": turn.turn_index,
+            "patient_id": resolved_patient or "unknown",
             "user_input": turn.user_input[:200],
             "route": turn.route.model_dump() if turn.route else None,
             "evidence_summary": evidence_summary,

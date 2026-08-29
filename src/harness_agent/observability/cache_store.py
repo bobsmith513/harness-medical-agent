@@ -64,7 +64,7 @@ class RedisCacheStore:
         pip install redis
 
     接口与 ``MemoryCacheStore`` 完全对齐（get/set/delete/clear/size）；
-    redis 包未安装时自动降级为进程内 MemoryCacheStore。
+    URL 填写但 redis 包未安装时启动报错（对齐 design-decisions 降级承诺）。
     """
 
     def __init__(self, url: str = "") -> None:
@@ -118,7 +118,7 @@ def build_cache_store(redis_url: str = "") -> CacheStore:
     """按配置装配缓存存储。
 
     Redis URL 留空时返回 MemoryCacheStore（零依赖默认）；
-    填写时返回 RedisCacheStore（redis 包未安装自动降级）。
+    填写时返回 RedisCacheStore（需安装 redis，否则启动报错）。
     """
     if not redis_url:
         return MemoryCacheStore()

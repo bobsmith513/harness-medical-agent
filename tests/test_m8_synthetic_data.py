@@ -106,7 +106,7 @@ class TestKnowledgeEntries:
         assert len(cap) >= 3
         contents = " ".join(e.content for e in cap)
         assert "阿奇霉素" in contents
-        assert "β-内酰胺" in contents or "β-内酰胺" in contents
+        assert "β-内酰胺" in contents
 
     def test_dm_guideline_entries(self) -> None:
         """糖尿病指南条目覆盖复诊 demo 检索。"""
@@ -203,6 +203,7 @@ class TestCrossDataConsistency:
         expected_drugs = set()
         for s in adv_samples:
             expected_drugs.update(s.expected_drugs)
+        assert expected_drugs, "对抗样本应包含期望阻断药物"
 
         # 合成档案过敏字段含"盘尼西林"→ 归一化为 penicillin
         assert any("盘尼西林" in a or "青霉素" in a for a in profile.allergies)

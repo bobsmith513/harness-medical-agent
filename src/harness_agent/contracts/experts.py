@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from harness_agent.contracts.retrieval import RetrievalQuery
 from harness_agent.models.common import new_id
 from harness_agent.models.evidence import EvidencePack
-from harness_agent.models.memory import AllergyRecord, Memory
+from harness_agent.models.memory import AllergyRecord
 from harness_agent.models.reasoning import ClinicalConclusion
 from harness_agent.models.session import SessionContext
 
@@ -51,8 +51,6 @@ class ContextBundle(BaseModel):
     allergies: list[AllergyRecord] = Field(default_factory=list)
     stable_facts: list[str] = Field(default_factory=list)
     volatile_facts: list[str] = Field(default_factory=list)
-    #: 召回的已转正记忆（status=approved，未审核记忆不在此出现）
-    recalled_memories: list[Memory] = Field(default_factory=list)
 
 
 @runtime_checkable

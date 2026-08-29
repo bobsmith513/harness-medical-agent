@@ -38,12 +38,13 @@ experts:
     inputs:
       - question
 
-  - name: intake_expert
-    kind: generic
-    description: 信息登记专家：将患者口述的既往史、用药变化等结构化为记忆草稿（未审核，不进召回索引）。
-    instruction: |
-      将患者口述内容结构化为记忆草稿字段（subject / content /易变标记）。
-      草稿默认 unreviewed，仅会话内可见，审核通过才可被召回。
-      患者口述：{utterance}
-    inputs:
-      - utterance
+  # intake_expert（规划中，未实现）——信息登记专家
+  # - name: intake_expert
+  #   kind: generic
+  #   description: 信息登记专家：将患者口述的既往史、用药变化等结构化为记忆草稿（未审核，不进召回索引）。
+  #   instruction: |
+  #     将患者口述内容结构化为记忆草稿字段（subject / content /易变标记）。
+  #     草稿默认 unreviewed，仅会话内可见，审核通过才可被召回。
+  #     患者口述：{utterance}
+  #   inputs:
+  #     - utterance

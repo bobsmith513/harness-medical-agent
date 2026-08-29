@@ -169,8 +169,10 @@ def main() -> None:
     # ---- 0. 脱敏中间件前置 ----
     _print_section("步骤 0：脱敏中间件前置")
     desensitizer = PatternDesensitizer()
+    # 患者姓名用显式标记（患者：xxx），与脱敏器的姓名规则一致——
+    # 裸姓名（无标记）按设计不脱敏，避免误伤临床正文中的人名
     raw_input = (
-        "张明（身份证 310101198001011234）咳嗽三天，"
+        "患者：张明（身份证 310101198001011234）咳嗽三天，"
         "发烧 38.5 度，之前打盘尼西林过敏，用药方案怎么定？"
         "电话 13812345678"
     )
@@ -228,7 +230,7 @@ def main() -> None:
         print(f"  阻断药物: {pack.blocked_drugs or '（无）'}")
         for ev in pack.evidence:
             tag = "[补全]" if ev.is_structural_completion else "[命中]"
-            print(f"  {tag} [{ev.evidence_id[:16]}] {ev.content[:50]}")
+            print(f"  {tag} [{ev.evidence_id[:16]}] {ev.content[:80]}")
 
     # ---- 4. 推理专家 ----
     _print_section("步骤 4：推理专家（三段式推理链 + 自检）")
@@ -238,7 +240,7 @@ def main() -> None:
         print(f"  推理链 {len(chain.steps)} 步:")
         for i, step in enumerate(chain.steps):
             cite = f" (引用: {step.citations})" if step.citations else ""
-            print(f"    {i + 1}. [{step.kind}] {step.text[:50]}{cite}")
+            print(f"    {i + 1}. [{step.kind}] {step.text[:80]}{cite}")
 
     # ---- 5. 质量门禁 ----
     _print_section("步骤 5：质量门禁（LLM-judge + 输出闸门）")

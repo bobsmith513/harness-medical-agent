@@ -18,13 +18,13 @@ class TestLoadRealConfig:
     def test_shipped_config_loads(self):
         registry = load_experts(DEFAULT_EXPERTS_CONFIG)
         names = {spec.name for spec in registry.specs()}
-        assert {"reasoning_expert", "memory_expert", "intake_expert"} <= names
+        # intake_expert 规划中未实现，已注释；已注册专家必须可加载
+        assert {"reasoning_expert", "memory_expert"} <= names
 
     def test_kinds_declared(self):
         registry = load_experts(DEFAULT_EXPERTS_CONFIG)
         assert len(registry.by_kind("reasoning")) >= 1
         assert len(registry.by_kind("memory")) >= 1
-        assert len(registry.by_kind("generic")) >= 1
 
     def test_instruction_placeholders_bound_to_inputs(self):
         registry = load_experts(DEFAULT_EXPERTS_CONFIG)

@@ -1,8 +1,8 @@
 """Tracer 实现（M7）：NoopTracer + LangfuseTracer 骨架。
 
 - ``NoopTracer``：Langfuse 密钥留空时自动降级，仅打印事件到 stdout；
-- ``LangfuseTracer``：密钥填写后通过 Langfuse SDK 写入
-  （本类为骨架，真实部署需安装 langfuse 包）。
+- ``LangfuseTracer``：密钥填写后初始化 Langfuse SDK，
+  但 v3+ 集成尚未实现（``record`` 降级为 Noop 打印）。
 
 两者共用 ``Tracer`` 接口（M1 契约），配置切换零逻辑分叉。
 """
@@ -61,13 +61,14 @@ class NoopTracer:
 
 
 class LangfuseTracer:
-    """Langfuse Tracer 骨架（密钥填写后通过 SDK 写入）。
+    """Langfuse Tracer 骨架（密钥填写后初始化 SDK，v3+ 集成待实现）。
 
     生产部署需安装 ``langfuse`` 包：
         pip install langfuse
 
-    本类实现 ``Tracer`` 接口完整签名，但在未安装 SDK 时
-    自动降级为打印模式（与 NoopTracer 等价）。
+    密钥填写但 langfuse 未安装时启动报错（对齐 design-decisions 降级承诺）。
+    SDK 已安装时初始化客户端，但 v3+ ``record`` 适配尚未实现——
+    事件降级为 Noop 打印（不丢失 trace 数据，但不写入 Langfuse）。
     """
 
     def __init__(
@@ -84,37 +85,31 @@ class LangfuseTracer:
         self._trace_id: str | None = None
         self._fallback = NoopTracer()
 
-        # 尝试初始化 Langfuse 客户端
+        # 密钥填写时尝试初始化 Langfuse 客户端
         if public_key and secret_key:
             try:
                 from langfuse import Langfuse  # type: ignore[import-untyped]
-
-                self._client = Langfuse(
-                    public_key=public_key,
-                    secret_key=secret_key,
-                    host=host or "https://cloud.langfuse.com",
-                )
-            except ImportError:
-                # langfuse 包未安装 → 降级为 Noop
-                pass
+            except ImportError as exc:
+                raise ImportError(
+                    "langfuse 包未安装：uv sync --extra all 后重试，"
+                    "或清空 Langfuse 密钥使用 NoopTracer（零依赖默认）"
+                ) from exc
+            self._client = Langfuse(
+                public_key=public_key,
+                secret_key=secret_key,
+                host=host or "https://cloud.langfuse.com",
+            )
 
     def bind(self, session_id: str, trace_id: str) -> None:
         self._session_id = session_id
         self._trace_id = trace_id
-        if self._client is None:
-            self._fallback.bind(session_id, trace_id)
+        # v3+ bind 适配待实现，降级为 Noop 打印
+        self._fallback.bind(session_id, trace_id)
 
     def record(self, event: TraceEvent) -> None:
-        if self._client is not None:
-            # 真实部署：通过 Langfuse SDK 写入
-            self._client.trace(
-                id=event.trace_id,
-                session_id=event.session_id,
-                name=event.event_type,
-                metadata=event.payload,
-            )
-        else:
-            self._fallback.record(event)
+        # v3+ record 适配待实现（client.trace() 为 v1/v2 已废弃 API），
+        # 降级为 Noop 打印——不丢失 trace 事件，但不写入 Langfuse
+        self._fallback.record(event)
 
 
 def build_tracer(
@@ -125,7 +120,7 @@ def build_tracer(
     """按配置装配 Tracer。
 
     Langfuse 密钥留空时返回 NoopTracer（仅打印）；
-    填写时返回 LangfuseTracer（SDK 未安装自动降级）。
+    填写时返回 LangfuseTracer（需安装 langfuse 包，否则启动报错）。
     """
     if not langfuse_public_key or not langfuse_secret_key:
         return NoopTracer()

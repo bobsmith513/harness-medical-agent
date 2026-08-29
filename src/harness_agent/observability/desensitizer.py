@@ -11,7 +11,7 @@
 - 手机号（11 位）→ ``[REDACTED-PHONE]``
 - 患者编号（pat-xxx / 患者编号:xxx）→ ``[REDACTED-PATID]``
 - 邮箱地址 → ``[REDACTED-EMAIL]``
-- 患者姓名标记（姓名:xxx / 患者张三）→ ``[REDACTED-NAME]``
+- 患者姓名标记（姓名：xxx / 患者：xxx —— 显式标记式，避免误伤临床正文）→ ``[REDACTED-NAME]``
 """
 
 from __future__ import annotations
@@ -23,27 +23,35 @@ from harness_agent.contracts.observability import DesensitizedText
 __all__ = ["PatternDesensitizer"]
 
 #: 脱敏规则：(pattern, entity_type)
+#:
+#: 边界用环视（lookaround）而非 ``\b`` 词边界：Python 正则里中文也属于
+#: ``\w``，中文与数字之间不构成词边界，"身份证310101…" / "电话138…"
+#: 这类紧贴中文（无空格）的 PII 会被 ``\b`` 静默漏过。
+#: 数字环视同时防止长数字串内部的误报（如 18 位身份证内嵌 11 位手机号）。
 _PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # 身份证号（18 位：地区6 + 年月日8 + 顺序3 + 校验1）
     (
         re.compile(
-            r"\b[1-9]\d{5}(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx]\b"
+            r"(?<![0-9Xx])[1-9]\d{5}(?:19|20)\d{2}(?:0[1-9]|1[0-2])"
+            r"(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx](?!\d)"
         ),
         "ID",
     ),
     # 身份证号（15 位：旧版）
     (
-        re.compile(r"\b[1-9]\d{5}\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}\b"),
+        re.compile(
+            r"(?<![0-9Xx])[1-9]\d{5}\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}(?!\d)"
+        ),
         "ID",
     ),
     # 手机号（11 位，1 开头）
     (
-        re.compile(r"\b1[3-9]\d{9}\b"),
+        re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)"),
         "PHONE",
     ),
     # 患者编号（pat-xxx 或 patient_id=xxx）
     (
-        re.compile(r"\bpat-[a-z0-9]+\b", re.IGNORECASE),
+        re.compile(r"(?<![A-Za-z0-9])pat-[a-z0-9]+(?![A-Za-z0-9])", re.IGNORECASE),
         "PATID",
     ),
     (
@@ -55,13 +63,13 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [
         re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"),
         "EMAIL",
     ),
-    # 姓名标记（姓名:xxx / 患者 xxx）
+    # 姓名标记（姓名:xxx / 患者：xxx —— 显式标记式，避免误伤临床正文）
     (
         re.compile(r"姓名\s*[:：]\s*[\u4e00-\u9fa5]{2,4}"),
         "NAME",
     ),
     (
-        re.compile(r"患者[\u4e00-\u9fa5]{2,4}(?=[\s,，。]|$)"),
+        re.compile(r"患者\s*[:：]\s*[\u4e00-\u9fa5]{2,4}"),
         "NAME",
     ),
 ]
@@ -85,8 +93,6 @@ class PatternDesensitizer:
         for pattern, entity_type in self._patterns:
             matches = pattern.findall(result)
             for match in matches:
-                if isinstance(match, tuple):
-                    match = match[0] if match else ""
                 removed.append(f"{entity_type}:{match}")
             result = pattern.sub(f"[REDACTED-{entity_type}]", result)
 
@@ -100,6 +106,10 @@ class PatternDesensitizer:
                 result[key] = self.desensitize(value).text
             elif isinstance(value, dict):
                 result[key] = self.desensitize_dict(value)
+            elif isinstance(value, list):
+                result[key] = [
+                    self.desensitize(item).text if isinstance(item, str) else item for item in value
+                ]
             else:
                 result[key] = value
         return result

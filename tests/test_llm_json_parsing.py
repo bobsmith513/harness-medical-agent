@@ -152,6 +152,57 @@ class TestJudgeParsing:
         assert verdict["faithfulness"] == 0.0
         assert "不可解析" in verdict["reason"]
 
+    def test_missing_boolean_fields_intercepted(self):
+        """judge 输出缺布尔标志字段 → 拦截（fail-closed：无法证明"无臆测"）。"""
+        gate = LLMJudgeGate(llm=MockLLMClient(role="judge"))
+        built = gate._build_verdict({"faithfulness": 0.9, "reason": "标志字段缺失"})
+        assert built.allowed is False
+        assert "臆测标志字段缺失" in built.reason
+
+    def test_non_bool_flag_types_intercepted(self):
+        """布尔标志为数字/列表等非布尔类型 → 拦截（不按真值强转放行）。"""
+        gate = LLMJudgeGate(llm=MockLLMClient(role="judge"))
+        built = gate._build_verdict(
+            {"faithfulness": 0.9, "has_hallucination": 1, "causal_inversion": [], "reason": "x"}
+        )
+        assert built.allowed is False
+        assert "臆测标志字段缺失或类型异常" in built.reason
+
+    def test_string_bool_literals_parsed_literally(self):
+        """字符串 'true'/'false' 按字面处理（bool('false') 为真的陷阱回归）。"""
+        gate = LLMJudgeGate(llm=MockLLMClient(role="judge"))
+        built = gate._build_verdict(
+            {
+                "faithfulness": "0.9",
+                "has_hallucination": "false",
+                "causal_inversion": "false",
+                "reason": "结论有证据支撑",
+            }
+        )
+        assert built.allowed is True
+
+    def test_string_true_flag_intercepted(self):
+        """字符串 'true' 的臆测标志 → 拦截。"""
+        gate = LLMJudgeGate(llm=MockLLMClient(role="judge"))
+        built = gate._build_verdict(
+            {
+                "faithfulness": 0.95,
+                "has_hallucination": "true",
+                "causal_inversion": "false",
+                "reason": "引入证据外推断",
+            }
+        )
+        assert built.allowed is False
+        assert "臆测" in built.reason
+
+    def test_evaluate_missing_flags_intercepted(self):
+        """端到端：judge 应答缺布尔标志字段 → 完整门禁链路拦截。"""
+        incomplete = json.dumps({"faithfulness": 0.95, "reason": "标志字段缺失"})
+        gate = LLMJudgeGate(llm=MockLLMClient(role="judge", script=[incomplete]))
+        verdict = gate.evaluate(make_conclusion(), make_evidence_pack())
+        assert verdict.allowed is False
+        assert "标志字段缺失" in verdict.reason
+
     def test_evaluate_with_fenced_script(self):
         """端到端：围栏包裹的 judge 应答经完整门禁链路仍可放行。"""
         fenced = (
