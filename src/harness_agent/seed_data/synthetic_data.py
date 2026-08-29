@@ -9,7 +9,7 @@
 - adversarial_samples 聚焦安全闸门对抗维度（每类 1-2 条）；
 - 本文件聚焦端到端 demo 的完整业务叙事（患者画像 + 知识 + 对话）。
 
-位于包内（``harness_agent.fixtures``）：CLI 启动时按 ``HARNESS_APP__SEED_SAMPLE_DATA``
+位于包内（``harness_agent.seed_data``）：CLI 启动时按 ``HARNESS_APP__SEED_SAMPLE_DATA``
 开关把这些数据灌入检索库——数据库地址来自 ``.env``，内容来自这里。
 """
 

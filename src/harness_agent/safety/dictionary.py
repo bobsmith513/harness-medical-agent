@@ -41,8 +41,9 @@ class DrugEntry(BaseModel):
 #: 内置合成词典（零依赖默认，32 条）。
 #:
 #: 覆盖口径：``beta_lactam`` 13 条（青霉素类 + 一至四代头孢 + 碳青霉烯）、
-#: ``nsaid`` 8 条、``sulfonamide`` 3 条，以及 8 条无交叉组的阴性对照
-#: （大环内酯 / 喹诺酮 / 对乙酰氨基酚 / 二甲双胍）。
+#: ``nsaid`` 8 条、``sulfonamide`` 3 条、单环 β-内酰胺（氨曲南，刻意不并入
+#: ``beta_lactam``）1 条，以及 7 条无交叉组的阴性对照
+#: （大环内酯 / 喹诺酮 / 对乙酰氨基酚 / 二甲双胍）。合计 13+1+8+3+7=32。
 #:
 #: 别名重叠的说明：``DrugNormalizer.find_mentions`` 按最长优先 + 占位扫描，
 #: 长别名会吃掉短别名的区间（``阿莫西林克拉维酸钾`` 吃掉 ``阿莫西林``、
@@ -207,7 +208,7 @@ SEED_DRUG_DICTIONARY: list[DrugEntry] = [
         cross_group="sulfonamide",
         aliases=["柳氮磺吡啶", "柳氮磺胺吡啶"],
     ),
-    # ==== 无交叉组：阴性对照（8 条）====
+    # ==== 无交叉组：阴性对照（7 条）====
     # 大环内酯：β-内酰胺过敏患者的标准替代方案。
     DrugEntry(
         normalized_name="azithromycin",

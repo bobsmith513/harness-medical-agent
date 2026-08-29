@@ -48,7 +48,7 @@ class AppSettings(BaseModel):
     # 本地运行时数据根目录：mock 向量存储 / VFS / SQLite 审计降级均落在此处（gitignore）
     data_dir: str = ".data"
     # 启动时把合成样例（4 位患者 + 8 条知识）灌入检索库：
-    # 数据库地址来自 .env，内容来自 harness_agent.fixtures（真实数据走 index 接口）
+    # 数据库地址来自 .env，内容来自 harness_agent.seed_data（真实数据走 index 接口）
     seed_sample_data: bool = True
 
 

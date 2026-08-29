@@ -65,9 +65,23 @@ class OpenAICompatClient:
         self._model = model
         self._timeout_s = timeout_s
         self._client = httpx.Client(timeout=timeout_s)
+        #: deepseek-reasoner 等推理模型已弃用 temperature 等采样参数
+        #: （采样固定，传入会被部分端点拒绝），按模型名自动跳过；
+        #: 其余 OpenAI 兼容端点（vLLM / gpt-4o / qwen 等）行为不变。
+        self._sends_sampling_params = "reasoner" not in model.lower()
         #: 调用记录锁：httpx.Client 线程安全，但 calls 追加需防并发交错
         self._calls_lock = threading.Lock()
         self.calls: list[list[LLMMessage]] = []
+
+    def close(self) -> None:
+        """释放底层 httpx 连接池（长生命周期客户端退出前调用，防泄漏）。"""
+        self._client.close()
+
+    def __enter__(self) -> OpenAICompatClient:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
 
     def complete(
         self,
@@ -81,8 +95,9 @@ class OpenAICompatClient:
         payload: dict[str, object] = {
             "model": self._model,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
-            "temperature": temperature,
         }
+        if self._sends_sampling_params:
+            payload["temperature"] = temperature
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
         response = self._client.post(

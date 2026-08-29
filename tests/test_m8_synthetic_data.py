@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from fixtures.adversarial_samples import ADVERSARIAL_SAMPLES
-from harness_agent.fixtures.synthetic_data import (
+from harness_agent.seed_data.synthetic_data import (
     KNOWLEDGE_ENTRIES,
     PATIENT_PROFILES,
     SESSION_SCRIPTS,

@@ -3,7 +3,7 @@
 - ``synthetic_data``：患者档案 / 知识条目 / 多轮会话脚本
 """
 
-from harness_agent.fixtures.synthetic_data import (
+from harness_agent.seed_data.synthetic_data import (
     KNOWLEDGE_ENTRIES,
     PATIENT_PROFILES,
     SESSION_SCRIPTS,

@@ -140,6 +140,36 @@ class TestProtocolCompliance:
         assert captured["payload"]["messages"][0]["content"] == "咳嗽三天怎么处理？"
         assert captured["auth"] == "Bearer sk-test"
 
+    def test_reasoner_model_omits_temperature(self):
+        """deepseek-reasoner 类推理模型已弃用 temperature → 不发送（其余参数照常）。"""
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["payload"] = json.loads(request.content)
+            return _json_response(_ok_body())
+
+        client = OpenAICompatClient(
+            role="reasoning",
+            base_url="http://test-endpoint/v1",
+            api_key="sk-test",
+            model="deepseek-reasoner",
+        )
+        client._client = httpx.Client(transport=httpx.MockTransport(handler))
+        client.complete(_messages(), temperature=0.3, max_tokens=128)
+        assert "temperature" not in captured["payload"]
+        assert captured["payload"]["max_tokens"] == 128
+
+    def test_close_and_context_manager_release_pool(self):
+        """close() 关闭底层连接池；上下文管理器退出等价于 close()（防泄漏）。"""
+        client = _client_with(lambda request: _json_response(_ok_body()))
+        client.complete(_messages())
+        client.close()
+        assert client._client.is_closed
+
+        with _client_with(lambda request: _json_response(_ok_body())) as scoped:
+            assert not scoped._client.is_closed
+        assert scoped._client.is_closed
+
     def test_concurrent_calls_record_all(self):
         """calls 记录并发安全（锁保护下的交错追加不丢条目）。"""
         import threading

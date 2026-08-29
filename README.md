@@ -17,7 +17,7 @@
 |------|------|
 | 主 Agent 纯编排 | 规划＋虚拟文件系统＋子代理委派，结构上不产出临床结论 |
 | fail-closed | 误路由二次路由、门禁未达标转澄清或人工，绝不静默降级应答 |
-| 硬规则不向量化 | 过敏史走药名归一化＋ATC 交叉反应精确匹配，配三道安全闸门（内置 32 条药物词典：β-内酰胺 13、NSAID 8、磺胺 3、阴性对照 8） |
+| 硬规则不向量化 | 过敏史走药名归一化＋ATC 交叉反应精确匹配，配三道安全闸门（内置 32 条药物词典：β-内酰胺 13、单环 β-内酰胺 1、NSAID 8、磺胺 3、阴性对照 7） |
 | 记忆需审核转正 | 摘要标注来源置信度、抽样审核通过才可召回，阻断推断固化为事实 |
 | 患者分区隔离 | patient_id 作为存储分区键，从存储层避免跨患者召回 |
 
@@ -166,16 +166,19 @@ uv run harness-online
 
 ### 预设服务商（端点与模型名自动解析）
 
-| provider | 端点 | 推理模型 | judge / 路由模型 |
-|----------|------|---------|-----------------|
-| `deepseek` | api.deepseek.com/v1 | deepseek-reasoner | deepseek-chat |
-| `qwen` | 阿里云百炼兼容模式 | qwen-max | qwen-plus |
-| `zhipu` | 智谱开放平台 | glm-4-plus | glm-4-air |
-| `moonshot` | 月之暗面 Moonshot | moonshot-v1-32k | moonshot-v1-8k |
-| `openai` | OpenAI 官方 | gpt-4o | gpt-4o-mini |
-| `siliconflow` | 硅基流动聚合 | DeepSeek-V3 | Qwen2.5-72B |
+| provider | 端点 | 推理模型 | judge 模型 | 路由模型 | 编排模型 |
+|----------|------|---------|-----------|---------|---------|
+| `deepseek` | api.deepseek.com/v1 | deepseek-reasoner | deepseek-chat | deepseek-chat | deepseek-chat |
+| `qwen` | dashscope.aliyuncs.com/compatible-mode/v1 | qwen-max | qwen-plus | qwen-turbo | qwen-plus |
+| `zhipu` | open.bigmodel.cn/api/paas/v4 | glm-4-plus | glm-4-air | glm-4-air | glm-4-plus |
+| `moonshot` | api.moonshot.cn/v1 | moonshot-v1-32k | moonshot-v1-8k | moonshot-v1-8k | moonshot-v1-32k |
+| `openai` | api.openai.com/v1 | gpt-4o | gpt-4o-mini | gpt-4o-mini | gpt-4o |
+| `siliconflow` | api.siliconflow.cn/v1 | deepseek-ai/DeepSeek-V3 | Qwen/Qwen2.5-72B-Instruct | Qwen/Qwen2.5-7B-Instruct | deepseek-ai/DeepSeek-V3 |
 
-> 上表型号为**默认值**而非功能依赖：各服务商型号会随版本更迭上下架，
+> 上表与 `src/harness_agent/llm/providers.py` 的 `PROVIDER_PRESETS` 逐字段一致：
+> 四个角色（推理 / judge / 路由 / 编排）是独立模型槽位，路由用轻量档即可。
+> 硅基流动等聚合平台要求**完整 model id（含 org 前缀）**，简写会直接 404。
+> 型号为**默认值**而非功能依赖：各服务商型号会随版本更迭上下架，
 > 以官网当期在售列表为准；型号不符时用 `HARNESS_LLM__<ROLE>_MODEL`
 > 覆盖即可。
 
@@ -613,7 +616,7 @@ uv run pytest -vv --durations=15 -rs   # 逐条 + 最慢 15 项 + 跳过原因
 
 | 边界 | 现状 | 影响 |
 |------|------|------|
-| 药物词典覆盖面 | 内置 32 条（β-内酰胺 13 / NSAID 8 / 磺胺 3 / 阴性对照 8） | 词典外的药物（如氯雷他定）不参与硬规则匹配——硬规则只对词典内药物生效。生产须用 `HARNESS_SAFETY__DICTIONARY_PATH` 指向完整词典 |
+| 药物词典覆盖面 | 内置 32 条（β-内酰胺 13 / 单环 β-内酰胺 1 / NSAID 8 / 磺胺 3 / 阴性对照 7） | 词典外的药物（如氯雷他定）不参与硬规则匹配——硬规则只对词典内药物生效。生产须用 `HARNESS_SAFETY__DICTIONARY_PATH` 指向完整词典 |
 | 姓名脱敏范围 | 只匹配**显式标记式**（`姓名：张明` / `患者：张明`） | 自由文本里的姓名（"张明，45 岁，咳嗽三天"）**不会**被脱敏。这是刻意的取舍：中文姓名无分隔符，正则匹配会大量误伤临床正文。身份证 / 手机 / 邮箱 / 患者编号不受此限制 |
 | 单环 β-内酰胺 | 氨曲南（`J01DF01`）刻意不并入 `beta_lactam` 组 | 与青霉素类交叉反应极低，临床视为可安全替代；并入会无谓误拦 |
 | 同父补全隔离 | `sibling_ids` 取回的相邻 chunk 在门面层校验 `patient_id` | 底层 `get_chunk` 是按 chunk_id 的全局直查（三处实现均无 patient_id 条件），越界 chunk 在进入证据包前被丢弃 |
@@ -743,8 +746,9 @@ uv.lock           # 锁文件（根包 harness-agent，勿用其他环境的 loc
 [design-decisions.md](docs/design-decisions.md)（关键实现参数的理由与数据口径）、
 以及 `tests/`（每项安全与降级语义的断言）。
 
-评估这个项目请从上述三份产出物入手，而不是从提交时间轴推断——
-提交历史只记录结果，不反映过程。
+评估路径建议：先看上述三份产出物，再看提交历史——仓库按
+M0→M9 里程碑组织为渐进提交链，每个提交对应一个可验证的增量，
+结果与过程都在。
 
 ## 合规声明
 

@@ -33,13 +33,13 @@ from harness_agent.config.settings import Settings, get_settings, reset_settings
 from harness_agent.contracts.retrieval import StoredChunk  # noqa: E402
 from harness_agent.experts.memory_expert import MemoryExpertImpl  # noqa: E402
 from harness_agent.experts.reasoning_expert import ReasoningExpertImpl  # noqa: E402
-from harness_agent.fixtures import KNOWLEDGE_ENTRIES, PATIENT_PROFILES  # noqa: E402
 from harness_agent.llm.wiring import build_llm_client, describe_llm_setup  # noqa: E402
 from harness_agent.models.session import SessionContext  # noqa: E402
 from harness_agent.observability import PatternDesensitizer  # noqa: E402
 from harness_agent.orchestrator import build_orchestrator  # noqa: E402
 from harness_agent.retrieval.wiring import build_retrieval_stack  # noqa: E402
 from harness_agent.safety import build_safety_stack  # noqa: E402
+from harness_agent.seed_data import KNOWLEDGE_ENTRIES, PATIENT_PROFILES  # noqa: E402
 
 __all__ = ["main"]
 
