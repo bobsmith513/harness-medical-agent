@@ -5,7 +5,7 @@
 [![CI](https://github.com/bobsmith513/harness-medical-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/bobsmith513/harness-medical-agent/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Status](https://img.shields.io/badge/status-M8%E5%B7%B2%E5%AE%8C%E6%88%90-success)
+![Status](https://img.shields.io/badge/status-M9%E5%B7%B2%E5%8F%91%E5%B8%83-success)
 
 > 测试现状：**631 个用例**，零依赖 mock 环境全绿（可本地 `uv run pytest` 复跑）；`--all-extras` CI 环境为 627 通过 + 4 跳过（CI 全绿见顶部徽章，跳过原因见[测试体系](#测试体系在测什么不测什么)）。行覆盖率 84.88%（`pytest --cov` 实测，门禁阈值 80%）。
 
@@ -168,12 +168,16 @@ uv run harness-online
 
 | provider | 端点 | 推理模型 | judge / 路由模型 |
 |----------|------|---------|-----------------|
-| `deepseek` | api.deepseek.com/v1 | deepseek-v4-pro | deepseek-v4-flash |
-| `qwen` | 阿里云百炼兼容模式 | qwen3.8-max | qwen3.8-flash |
-| `zhipu` | 智谱开放平台 | glm-4.6 | glm-4.5-air |
-| `moonshot` | 月之暗面 Kimi | kimi-k3 | kimi-k2.6 |
+| `deepseek` | api.deepseek.com/v1 | deepseek-reasoner | deepseek-chat |
+| `qwen` | 阿里云百炼兼容模式 | qwen-max | qwen-plus |
+| `zhipu` | 智谱开放平台 | glm-4-plus | glm-4-air |
+| `moonshot` | 月之暗面 Moonshot | moonshot-v1-32k | moonshot-v1-8k |
 | `openai` | OpenAI 官方 | gpt-4o | gpt-4o-mini |
 | `siliconflow` | 硅基流动聚合 | DeepSeek-V3 | Qwen2.5-72B |
+
+> 上表型号为**默认值**而非功能依赖：各服务商型号会随版本更迭上下架，
+> 以官网当期在售列表为准；型号不符时用 `HARNESS_LLM__<ROLE>_MODEL`
+> 覆盖即可。
 
 ### 微调模型旁路（混合部署）
 
@@ -214,7 +218,7 @@ cp .env.example .env
 | Langfuse | NoopTracer（仅打印） | 自托管 Langfuse |
 | PostgreSQL | SQLite（本地文件） | docker-compose |
 | Redis | 内存字典 + 进程内锁 | docker-compose |
-| OpenSandbox | MockRuntime（本地子进程） | Docker/K8s |
+| OpenSandbox | MockRuntime（本地子进程） | 未实现（适配器占位，`execute` 恒返回失败，规划中） |
 
 ## 白盒日志全链路走读
 
@@ -228,13 +232,20 @@ cp .env.example .env
 "忠实度 0.92" 等门禁数值为剧本预设值——demo 验证的是**编排与门禁的工程行为**
 （路由裁决、拦截链、trace 结构），不是检索与推理的应答质量。
 
+**静态桩的连带影响**：输入闸门（检索前）与装配闸门（证据包交付前）由
+检索服务内部调用，检索层被桩替换后**这两道闸门在 demo 链路中不执行**——
+demo 打印的"阻断药物"是静态包的字段，不是闸门判定结果。
+三道闸门的真实行为见 `examples/demo_retrieval.py` 与
+`tests/test_safety_*`（37 条对抗样本，漏检率要求为 0）。
+输出闸门位于门禁流水线、不依赖检索层，因此 demo 中它是真实执行的。
+
 ### 例一：初诊推理全链路（7 步）
 
 **患者**：张明，45 岁男，青霉素过敏，咳嗽三天伴发热 38.5 度
 
 ```mermaid
 flowchart TD
-    A["<b>步骤 0：脱敏中间件</b><br/>输入: 患者：张明（身份证 310101198001011234）...电话 13812345678<br/>输出: [REDACTED-NAME]（身份证 [REDACTED-ID]）...电话 [REDACTED-PHONE]<br/>移除: ID, PHONE, NAME"]
+    A["<b>步骤 0：脱敏中间件</b><br/>输入: 患者：张明（身份证 310101198001011234）...电话 13812345678<br/>输出: [REDACTED-NAME]（身份证 [REDACTED-ID]）...电话 [REDACTED-PHONE]<br/>移除: ID / PHONE / NAME（仅类型 + 掩码，不含原文）"]
     B["<b>步骤 1：装配组件</b><br/>知识库入库: 2 条（CAP 指南）<br/>过敏史: 盘尼西林 → penicillin (ATC=J01CE01)<br/>交叉反应阻断: β-内酰胺组共 12 条（青霉素类/一至四代头孢/碳青霉烯）"]
     C["<b>步骤 2：路由器裁决</b><br/>查询: 咳嗽三天伴发热，用药方案怎么定？<br/>路由: need_reasoning (by_rule=True)<br/>规则命中: 用药"]
     D["<b>步骤 3：检索供给层</b><br/>证据包: 1 条, is_reviewed=True<br/>命中: ev-1 CAP 患者 β-内酰胺类过敏 → 阿奇霉素替代"]
@@ -261,7 +272,7 @@ M8 端到端演示一：初诊推理全链路
             发烧 38.5 度，之前打盘尼西林过敏，用药方案怎么定？电话 13812345678
   脱敏后:   [REDACTED-NAME]（身份证 [REDACTED-ID]）咳嗽三天，发烧 38.5 度，
             之前打盘尼西林过敏，用药方案怎么定？电话 [REDACTED-PHONE]
-  移除标识: ID:310101198001011234, PHONE:13812345678, NAME:患者：张明
+  移除标识: ID:31**************34, PHONE:13*******78, NAME:*****
   → 患者标识已替换为 [REDACTED-xx] 占位符
 
 ========================================================================
@@ -543,7 +554,7 @@ fail-closed 语义：拦截即 interrupt，绝不静默放行
 | `mock_openai_server.py` | 无 Key 验证在线链路 | 真 HTTP 服务模拟 OpenAI 协议，含网络层的全链路跑通 | `uv run python examples/mock_openai_server.py` |
 | `demo_first_diagnosis.py` | 初诊推理全链路 | 脱敏→路由→检索→推理→门禁→结论→trace（7 步） | `uv run python examples/demo_first_diagnosis.py` |
 | `demo_followup_memory.py` | 复诊记忆命中免问询 | 摘要→审核→转正→召回→编排验证（4 Phase） | `uv run python examples/demo_followup_memory.py` |
-| `demo_long_conversation.py` | 长会话压缩 | 20 轮压缩 81%（demo 运行输出，非基准测试）、VFS 持久化、批量审核（5 Phase） | `uv run python examples/demo_long_conversation.py` |
+| `demo_long_conversation.py` | 长会话压缩 | 20 轮压缩 81%（估算值，非基准测试）、VFS 持久化、批量审核（5 Phase） | `uv run python examples/demo_long_conversation.py` |
 | `demo_gate_interception.py` | 门禁拦截转人工 | 忠实度/臆测/过敏药物 3 拦截 + 1 正常对照 | `uv run python examples/demo_gate_interception.py` |
 
 ## 模块级 Demo
@@ -607,6 +618,7 @@ uv run pytest -vv --durations=15 -rs   # 逐条 + 最慢 15 项 + 跳过原因
 | 单环 β-内酰胺 | 氨曲南（`J01DF01`）刻意不并入 `beta_lactam` 组 | 与青霉素类交叉反应极低，临床视为可安全替代；并入会无谓误拦 |
 | 同父补全隔离 | `sibling_ids` 取回的相邻 chunk 在门面层校验 `patient_id` | 底层 `get_chunk` 是按 chunk_id 的全局直查（三处实现均无 patient_id 条件），越界 chunk 在进入证据包前被丢弃 |
 | 精排与语义 | 零依赖默认为哈希嵌入 + identity 精排 | 无语义能力，见架构图上的诚实标注 |
+| 输入闸门不做意图识别 | 查询文本检出过敏药名即拦截，不区分"陈述过敏史"与"要求开该药" | 患者说"我青霉素过敏，能吃什么"会被拦截转人工——这是 fail-closed 的代价，当前取舍是宁可误拦。改进方向：在 `safety/input_gate.py` 加语境判定（"过敏/禁用/不能吃"→陈述，"建议/开/换用"→施动） |
 
 ## 配置详情
 
@@ -726,13 +738,13 @@ uv.lock           # 锁文件（根包 harness-agent，勿用其他环境的 loc
 
 本项目采用 **AI 辅助开发 + 人工设计决策与验证** 的方式完成：架构分层、fail-closed 语义、安全闸门取舍等设计决策由作者制定，代码实现与测试编写有 AI 工具深度参与，作者负责逐模块审读、运行验证并承担全部正确性责任。
 
-提交历史按里程碑线性推进——`e7f4695` 脚手架 → 领域模型 → 安全层 → 检索 → 可观测 →
-沙箱 → 编排 → 门禁 → VFS → MCP → LLM → CLI → 端到端（`a6898b9` 打 `v0.1.0`），
-其后两轮静态审查收尾；`git log --oneline` 即是一条完整的能力演进链。
 三份配套材料回答"为什么这么做"——
 [development-plan.md](docs/development-plan.md)（每个里程碑的设计取舍）、
 [design-decisions.md](docs/design-decisions.md)（关键实现参数的理由与数据口径）、
 以及 `tests/`（每项安全与降级语义的断言）。
+
+评估这个项目请从上述三份产出物入手，而不是从提交时间轴推断——
+提交历史只记录结果，不反映过程。
 
 ## 合规声明
 
