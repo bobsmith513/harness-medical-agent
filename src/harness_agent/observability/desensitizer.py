@@ -75,6 +75,22 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [
 ]
 
 
+def _mask(value: str) -> str:
+    """实体值脱敏展示：长值保留首尾各 2 位，短值整体打星。
+
+    ``removed_entities`` 的用途是"告诉调用方移除了什么类型、几条"，
+    不是"把原文再抄一遍"——把明文 PII 装进脱敏结果里等于脱敏了个
+    寂寞，下游一旦打印该字段（日志 / demo 白盒输出）就原样泄露。
+
+    阈值取 8：身份证（18 位）/ 手机号（11 位）/ 邮箱 / 患者编号掩码后
+    仍可用于比对与定位；而姓名标记（`患者：张明` 仅 5 字）保留任何
+    一位都等于泄露全名，故整体打星。
+    """
+    if len(value) < 8:
+        return "*" * len(value)
+    return f"{value[:2]}{'*' * (len(value) - 4)}{value[-2:]}"
+
+
 class PatternDesensitizer:
     """正则脱敏中间件：出站调用前去除患者标识。
 
@@ -86,14 +102,18 @@ class PatternDesensitizer:
         self._patterns = patterns or _PATTERNS
 
     def desensitize(self, text: str) -> DesensitizedText:
-        """脱敏：替换 PII 为占位符，记录被移除的实体。"""
+        """脱敏：替换 PII 为占位符，记录被移除的实体类型与掩码。
+
+        ``removed_entities`` 只含「类型 + 掩码」，**不含原文**——脱敏结果
+        自身不得成为 PII 的第二个副本（理由见 ``_mask``）。
+        """
         removed: list[str] = []
         result = text
 
         for pattern, entity_type in self._patterns:
             matches = pattern.findall(result)
             for match in matches:
-                removed.append(f"{entity_type}:{match}")
+                removed.append(f"{entity_type}:{_mask(match)}")
             result = pattern.sub(f"[REDACTED-{entity_type}]", result)
 
         return DesensitizedText(text=result, removed_entities=removed)
