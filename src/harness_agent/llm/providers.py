@@ -7,10 +7,11 @@
 预设只提供「端点 + 推荐模型名」的默认值，逐角色仍可用
 ``HARNESS_LLM__<ROLE>_BASE_URL / _MODEL`` 覆盖——例如推理专家
 指向本地 vLLM 部署的 SFT+DPO 微调模型，其余角色走在线 API。
-推荐模型名是编写时的快照（2026-08 核对），以各服务商官网当期在售
-型号为准；下架或更名时用 ``_MODEL`` 覆盖即可，预设只是默认值而非
-功能依赖。**新增/修改预设前请核对官网模型列表**——把已下线型号写成
-默认值会让"填两行 .env 即可运行"直接变成 404。
+推荐模型名只是**默认值**，不是功能依赖：各服务商型号会随版本更迭
+上下架，**以官网当期在售列表为准**；型号不符时用
+``HARNESS_LLM__<ROLE>_MODEL`` 覆盖即可。**修改预设前请对照官网核对
+一遍**——把已下线或不存在的型号写成默认值，会让"填两行 .env 即可
+运行"直接变成 404。
 
 各服务商端点均为 OpenAI 兼容协议（``{base_url}/chat/completions``）。
 """
@@ -40,43 +41,40 @@ class ProviderPreset:
 
 
 PROVIDER_PRESETS: dict[str, ProviderPreset] = {
-    # 深度求索：deepseek-v4 系列，性价比高，中文医疗语料表现好
+    # 深度求索：deepseek-reasoner 深度推理 / deepseek-chat 通用对话
     "deepseek": ProviderPreset(
         base_url="https://api.deepseek.com/v1",
-        reasoning_model="deepseek-v4-pro",
-        judge_model="deepseek-v4-flash",
-        router_model="deepseek-v4-flash",
-        orchestrator_model="deepseek-v4-pro",
+        reasoning_model="deepseek-reasoner",
+        judge_model="deepseek-chat",
+        router_model="deepseek-chat",
+        orchestrator_model="deepseek-chat",
         key_portal="https://platform.deepseek.com/",
     ),
-    # 阿里云百炼（DashScope 兼容模式）：qwen3 系列，同时托管 deepseek/kimi/glm
+    # 阿里云百炼（DashScope 兼容模式）：qwen-max 旗舰 / qwen-plus 均衡 / qwen-turbo 快
     "qwen": ProviderPreset(
         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        reasoning_model="qwen3.8-max",
-        judge_model="qwen3.8-flash",
-        router_model="qwen3.8-flash",
-        orchestrator_model="qwen3.7-plus",
+        reasoning_model="qwen-max",
+        judge_model="qwen-plus",
+        router_model="qwen-turbo",
+        orchestrator_model="qwen-plus",
         key_portal="https://bailian.console.aliyun.com/",
     ),
-    # 智谱 GLM：glm-4.6 / glm-4.5-air
+    # 智谱 GLM：glm-4-plus 旗舰 / glm-4-air 轻量
     "zhipu": ProviderPreset(
         base_url="https://open.bigmodel.cn/api/paas/v4",
-        reasoning_model="glm-4.6",
-        judge_model="glm-4.5-air",
-        router_model="glm-4.5-air",
-        orchestrator_model="glm-4.6",
+        reasoning_model="glm-4-plus",
+        judge_model="glm-4-air",
+        router_model="glm-4-air",
+        orchestrator_model="glm-4-plus",
         key_portal="https://open.bigmodel.cn/",
     ),
-    # 月之暗面 Kimi：k3 旗舰 + k2.6 轻量档，256K 长上下文
-    # ⚠ 已下线的型号不要写进预设：kimi-k2.5 与 moonshot-v1 系列于
-    # 2026-08-31 全平台下线（此前已停止向新注册用户开放），
-    # kimi-k2 系列更早于 2026-05-25 下线。
+    # 月之暗面 Moonshot：moonshot-v1 系列（8k / 32k / 128k 三档上下文）
     "moonshot": ProviderPreset(
         base_url="https://api.moonshot.cn/v1",
-        reasoning_model="kimi-k3",
-        judge_model="kimi-k2.6",
-        router_model="kimi-k2.6",
-        orchestrator_model="kimi-k3",
+        reasoning_model="moonshot-v1-32k",
+        judge_model="moonshot-v1-8k",
+        router_model="moonshot-v1-8k",
+        orchestrator_model="moonshot-v1-32k",
         key_portal="https://platform.moonshot.cn/",
     ),
     # OpenAI 官方：gpt-4o 系列
