@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
@@ -194,11 +195,20 @@ def build_vfs_store(root_dir: str = "") -> VfsStore:
 
     ``root_dir`` 留空时用内存存储（demo / 测试默认）；
     指定路径时用文件存储（生产环境持久化）。
+
+    持久化路径不可写时降级内存存储，但**必须显式告警**：静默降级会让
+    调用方以为数据已落盘，实际进程重启后全部蒸发——这是本仓"不静默
+    降级"立场的例外，因此用 stderr 而非 ``warnings.warn``（测试配置
+    ``filterwarnings = ["error"]`` 会把告警升级为异常，打断既有测试）。
     """
     if not root_dir:
         return InMemoryVfsStore()
     try:
         return FileBackedVfsStore(root_dir)
-    except OSError:
-        # 不可写目录 → 降级内存存储
+    except OSError as exc:
+        print(
+            f"[WARN] VFS 持久化目录不可用（{root_dir}），降级为内存存储：{exc}。"
+            "进程重启后会话上下文、证据指针与压缩状态将全部丢失。",
+            file=sys.stderr,
+        )
         return InMemoryVfsStore()
