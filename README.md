@@ -7,7 +7,7 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Status](https://img.shields.io/badge/status-M9%E5%B7%B2%E5%8F%91%E5%B8%83-success)
 
-> 测试现状：**631 个用例**，零依赖 mock 环境全绿（可本地 `uv run pytest` 复跑）；`--all-extras` CI 环境为 627 通过 + 4 跳过（CI 全绿见顶部徽章，跳过原因见[测试体系](#测试体系在测什么不测什么)）。行覆盖率 84.88%（`pytest --cov` 实测，门禁阈值 80%）。
+> 测试现状：**634 个用例**（`pytest --collect-only` 实测，27 个测试文件），零依赖 mock 环境全绿（可本地 `uv run pytest` 复跑）；`--all-extras` CI 环境为 630 通过 + 4 跳过（CI 全绿见顶部徽章，跳过原因见[测试体系](#测试体系在测什么不测什么)）。行覆盖率 84.88%（`pytest --cov` 实测，门禁阈值 80%）。
 
 **导航**：[快速开始](#快速开始) · [在线调用模式](#在线调用模式填两行-env-即可运行) · [测试体系](#测试体系在测什么不测什么) · [白盒日志走读](#白盒日志全链路走读) · [配置详情](#配置详情) · [项目结构](#项目结构)
 
@@ -128,7 +128,7 @@ uv run harness-online                     # 控制台命令（等价 examples/ru
 项目提供四套 requirements 文件，按场景选择：
 
 ```bash
-# 场景一：演示 / CI（零外部服务，4 个端到端 demo + 5 个模块级 demo + 631 项测试全跑通）
+# 场景一：演示 / CI（零外部服务，4 个端到端 demo + 5 个模块级 demo + 634 项测试全跑通）
 pip install -r requirements.txt && pip install -e .
 
 # 场景二：生产（接入 vLLM / 在线 API，.env 填 8 个字段）
@@ -208,7 +208,7 @@ cp .env.example .env
 
 | 场景 | 需填字段 | 说明 |
 |------|---------|------|
-| 零依赖演示 | 无（默认 mock） | 631 项测试 + 9 个 demo 全跑通 |
+| 零依赖演示 | 无（默认 mock） | 634 项测试 + 9 个 demo 全跑通 |
 | 在线调用 | `PROVIDER` + `API_KEY`（2 个） | 预设端点自动解析 |
 | 混合部署 | + `REASONING_BASE_URL` + `REASONING_MODEL` | 微调模型旁路 |
 | 自建端点 | 逐角色 `<ROLE>_BASE_URL` 等 | 通用 OpenAI 兼容协议 |
@@ -250,7 +250,7 @@ demo 打印的"阻断药物"是静态包的字段，不是闸门判定结果。
 flowchart TD
     A["<b>步骤 0：脱敏中间件</b><br/>输入: 患者：张明（身份证 310101198001011234）...电话 13812345678<br/>输出: [REDACTED-NAME]（身份证 [REDACTED-ID]）...电话 [REDACTED-PHONE]<br/>移除: ID / PHONE / NAME（仅类型 + 掩码，不含原文）"]
     B["<b>步骤 1：装配组件</b><br/>知识库入库: 2 条（CAP 指南）<br/>过敏史: 盘尼西林 → penicillin (ATC=J01CE01)<br/>交叉反应阻断: β-内酰胺组共 12 条（青霉素类/一至四代头孢/碳青霉烯）"]
-    C["<b>步骤 2：路由器裁决</b><br/>查询: 咳嗽三天伴发热，用药方案怎么定？<br/>路由: need_reasoning (by_rule=True)<br/>规则命中: 用药"]
+    C["<b>步骤 2：路由器裁决</b><br/>查询: [REDACTED-NAME]（身份证 [REDACTED-ID]）咳嗽三天，发烧 38.5 度，用药方案怎么定？电话 [REDACTED-PHONE]<br/>路由: need_reasoning (by_rule=True)<br/>规则命中: 用药"]
     D["<b>步骤 3：检索供给层</b><br/>证据包: 1 条, is_reviewed=True<br/>命中: ev-1 CAP 患者 β-内酰胺类过敏 → 阿奇霉素替代"]
     E["<b>步骤 4：推理专家</b><br/>自检: 3/3 通过（引用真实/因果正向/依据充分）<br/>1. evidence: 引用证据...阿奇霉素为安全替代 (引用: ev-1)<br/>2. inference: β-内酰胺类过敏史，阿奇霉素无交叉反应<br/>3. conclusion: 建议阿奇霉素 500mg qd × 3-5 天"]
     F["<b>步骤 5：质量门禁</b><br/>quality_judge: 通过 — 忠实度 0.92 ≥ 0.70<br/>output: 通过 — 未涉及过敏药物（阿奇霉素不在阻断列表）"]
@@ -272,11 +272,12 @@ M8 端到端演示一：初诊推理全链路
 步骤 0：脱敏中间件前置
 ========================================================================
   原始输入: 患者：张明（身份证 310101198001011234）咳嗽三天，
-            发烧 38.5 度，之前打盘尼西林过敏，用药方案怎么定？电话 13812345678
+            发烧 38.5 度，用药方案怎么定？电话 13812345678
   脱敏后:   [REDACTED-NAME]（身份证 [REDACTED-ID]）咳嗽三天，发烧 38.5 度，
-            之前打盘尼西林过敏，用药方案怎么定？电话 [REDACTED-PHONE]
+            用药方案怎么定？电话 [REDACTED-PHONE]
   移除标识: ID:31**************34, PHONE:13*******78, NAME:*****
   → 患者标识已替换为 [REDACTED-xx] 占位符
+  → 脱敏产物将作为查询进入编排链路（见步骤 2）
 
 ========================================================================
 步骤 1：装配全链路组件
@@ -290,7 +291,7 @@ M8 端到端演示一：初诊推理全链路
 ========================================================================
 步骤 2：路由器裁决
 ========================================================================
-  查询: 咳嗽三天伴发热，用药方案怎么定？
+  查询: [REDACTED-NAME]（身份证 [REDACTED-ID]）咳嗽三天，发烧 38.5 度，用药方案怎么定？电话 [REDACTED-PHONE]
   路由: need_reasoning (by_rule=True)
   规则命中: 规则前置命中: need_reasoning
 
@@ -334,7 +335,7 @@ M8 端到端演示一：初诊推理全链路
 [TRACE] route trace=trace-first payload_keys=['decision', 'by_rule']
   [TRACE] route: {'decision': 'need_reasoning', 'by_rule': True}
 [TRACE] retrieve trace=trace-first payload_keys=['query', 'evidence_count']
-  [TRACE] retrieve: {'query': '咳嗽三天伴发热，用药方案怎么定？', 'evidence_count': 1}
+  [TRACE] retrieve: {'query': '[REDACTED-NAME]（身份证 [REDACTED-ID]）咳嗽三天，发烧 38.5 度，用药方案怎么定？电话 [REDACTED-PHONE]', 'evidence_count': 1}
 [TRACE] reason trace=trace-first payload_keys=['chain_steps', 'self_check']
   [TRACE] reason: {'chain_steps': 3, 'self_check': True}
 [TRACE] gate_check trace=trace-first payload_keys=['quality_judge', 'output']
@@ -572,8 +573,8 @@ uv run python examples/demo_m7_observability.py # M7: 脱敏 + 沙箱 + trace
 
 ## 测试体系：在测什么，不测什么
 
-当前 **631 个用例**（27 个测试文件）：零依赖 mock 环境全部通过；`uv sync --all-extras`
-后的 CI 环境为 627 通过 + 4 跳过（跳过原因见下文），可本地 `uv run pytest -v` 复跑核对。
+当前 **634 个用例**（27 个测试文件，`pytest --collect-only` 实测）：零依赖 mock 环境全部通过；`uv sync --all-extras`
+后的 CI 环境为 630 通过 + 4 跳过（跳过原因见下文），可本地 `uv run pytest -v` 复跑核对。
 全部测试在进程内完成：外部服务（LLM / Redis / 数据库）一律以契约假件或降级路径覆盖，
 不依赖任何真实端点——Redis 测试通过 monkeypatch 模拟 SDK 缺失，装了 redis 包的环境
 也不会发起真实连接。全绿证明的是工程行为正确——解析、降级、升级路径可控，
@@ -592,8 +593,8 @@ uv run python examples/demo_m7_observability.py # M7: 脱敏 + 沙箱 + trace
 | 容错路径 | LLM 输出不可控时的行为：垃圾应答 → 二次路由 → 仍失败 → escalate，断言调用次数恰好 2 次 | `test_orchestrator_router.py`（34 项） |
 | fail-closed 骨架 | 推理专家抛异常 → 结论不产出、转人工；门禁拦截/异常 → 结论撤回；路由异常、任务清单缺失、记忆专家异常共 12 条升级出口逐条断言 `to_human=True` + 结论为空 | `test_orchestrator_agent.py`（23 项） |
 | 装配解析 | `.env` → 客户端配置的优先级规则（角色覆盖 > 共享 Key > provider 预设），只断言字段值 | `test_llm_online_wiring.py`（17 项） |
-| 解析健壮性 | LLM 输出 JSON 提取：嵌套对象、多段输出、字符串内花括号、围栏包裹（路由器与 judge 共用解析器） | `test_llm_json_parsing.py`（20 项） |
-| 端点容错 | OpenAI 兼容端点返回非 JSON / 缺字段 / 非文本 content 时的分类报错（MockTransport 离线注入） | `test_llm_response_protection.py`（13 项） |
+| 解析健壮性 | LLM 输出 JSON 提取：嵌套对象、多段输出、字符串内花括号、围栏包裹（路由器与 judge 共用解析器） | `test_llm_json_parsing.py`（25 项） |
+| 端点容错 | OpenAI 兼容端点返回非 JSON / 缺字段 / 非文本 content 时的分类报错（MockTransport 离线注入） | `test_llm_response_protection.py`（15 项） |
 
 `test_llm_online_wiring.py` 名字带 "online"，实际验证的是配置解析优先级，从不调用 `complete()`。
 
@@ -622,6 +623,7 @@ uv run pytest -vv --durations=15 -rs   # 逐条 + 最慢 15 项 + 跳过原因
 | 同父补全隔离 | `sibling_ids` 取回的相邻 chunk 在门面层校验 `patient_id` | 底层 `get_chunk` 是按 chunk_id 的全局直查（三处实现均无 patient_id 条件），越界 chunk 在进入证据包前被丢弃 |
 | 精排与语义 | 零依赖默认为哈希嵌入 + identity 精排 | 无语义能力，见架构图上的诚实标注 |
 | 输入闸门不做意图识别 | 查询文本检出过敏药名即拦截，不区分"陈述过敏史"与"要求开该药" | 患者说"我青霉素过敏，能吃什么"会被拦截转人工——这是 fail-closed 的代价，当前取舍是宁可误拦。改进方向：在 `safety/input_gate.py` 加语境判定（"过敏/禁用/不能吃"→陈述，"建议/开/换用"→施动） |
+| `no_reasoning` 路径不执行输出闸门 | 该路径产出 `ContextBundle` 而非临床结论，而 `DrugSafetyOutputGate.check` 的入参是 `ClinicalConclusion`，结构上无结论可扫 | 图结构为 `memory → finalize`（见 `orchestrator/agent.py`），不经 `gates` 节点。记忆召回的稳定事实不做药物安全全文扫描，其安全性由检索侧的**输入闸门与装配闸门**保证；记忆专家对未复核证据包（`is_reviewed=False`）抛错转人工，不静默降级。推理路径（`need_reasoning`）三道闸门 + 两道门禁全执行，不受此影响 |
 
 ## 配置详情
 
@@ -715,7 +717,7 @@ src/harness_agent/
 tests/
   fixtures/       # 合成数据（对抗样本种子集 37 条 + 患者档案 + 知识条目）
   factories.py    # 测试工厂（最小合法模型构造）
-  test_*.py       # 27 个文件，631 个用例（进程内完成，不依赖真实端点；CI 全绿见顶部徽章）
+  test_*.py       # 27 个文件，634 个用例（进程内完成，不依赖真实端点；CI 全绿见顶部徽章）
 examples/
   demo_*.py       # 端到端 + 模块级 demo
 requirements*.txt # 四套部署依赖（基础/生产/全量/开发）

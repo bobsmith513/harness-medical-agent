@@ -419,3 +419,26 @@ class TestMemoryExpert:
         )
         assert bundle.allergies  # 种子安全栈：pat-001 青霉素过敏
         assert any(r.normalized_drug == "penicillin" for r in bundle.allergies)
+
+    def test_unreviewed_pack_fails_closed(self):
+        """证据包未通过装配复核 → 记忆专家拒绝装配并抛错（fail-closed）。
+
+        与推理专家 ``ReasoningExpertImpl.reason`` 对称的强制约束：输入闸门
+        拦截时检索门面返回 ``is_reviewed=False`` 的空包，若记忆专家照常遍历
+        ``pack.evidence``，将产出空 ``stable_facts`` 的上下文包——表现为
+        "无记忆可用"的静默降级。此处必须抛错，由编排层 ``_memory_node``
+        的异常兜底转 escalate。
+        """
+        from harness_agent.contracts.retrieval import RetrievalQuery, StoredChunk
+        from harness_agent.experts.memory_expert import MemoryExpertImpl
+
+        service = self._stack_service()
+        service.index([StoredChunk(chunk_id="kb-1", content="青霉素的皮试要求与用法")])
+        expert = MemoryExpertImpl(retrieval=service)
+        with pytest.raises(ValueError, match="装配复核"):
+            expert.assemble(
+                RetrievalQuery(
+                    text="青霉素类抗生素怎么用", patient_id="pat-001", session_id="sess-1"
+                ),
+                SessionContext(patient_id="pat-001"),
+            )

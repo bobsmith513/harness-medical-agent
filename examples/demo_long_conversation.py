@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import json
+import sys
 
 from harness_agent.models.audit import GateVerdict
 from harness_agent.models.evidence import (
@@ -122,6 +123,9 @@ def _turn(index: int, token_count: int = 500) -> TurnRecord:
 
 
 def main() -> None:
+    # Windows 默认终端（GBK）无法编码 ✓/✗，打印时抛 UnicodeEncodeError。
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     print("M8 端到端演示三：长会话压缩")
     print("全链路内存 VFS（零外部依赖）")
     print(f"模拟 {TOTAL_TURNS} 轮会话，保留最近 {KEEP} 轮 + 文件指针")
@@ -174,8 +178,10 @@ def main() -> None:
     # ---- Phase 3：文件指针可回溯 ----
     _print_section("Phase 3：文件指针回溯验证")
     sample_pointers = list(context.file_pointers.items())[:6]
+    all_pointers_exist = bool(sample_pointers)
     for key, path in sample_pointers:
         exists = dir.exists(path)
+        all_pointers_exist = all_pointers_exist and exists
         print(f"  {key:25s} → {path}  exists={exists}")
 
     # 读取一个摘要验证内容
@@ -232,16 +238,36 @@ def main() -> None:
     print(f"  {'VFS 文件数':20s} {0:>10d} {vfs_count:>10d}")
     print(f"  {'可召回记忆':20s} {0:>10d} {len(queue.get_recallable('pat-001')):>10d}")
 
-    # ---- 验收总结 ----
+    # ---- 验收总结（按本轮真实结果条件打印，非恒绿） ----
+    recallable = queue.get_recallable("pat-001")
+    checks = [
+        (
+            f"{TOTAL_TURNS} 轮模拟会话上下文 token 降约 {reduction:.0f}%（≥ 50%）",
+            reduction >= 50,
+        ),
+        (
+            f"上下文只留最近 {KEEP} 轮 + {len(context.file_pointers)} 文件指针",
+            len(context.recent_turns) == KEEP,
+        ),
+        (
+            "VFS 四目录持久化: evidence + reasoning + summaries + memories",
+            all(
+                dir.count_entries(d) > 0
+                for d in (DIR_EVIDENCE, DIR_REASONING, DIR_SUMMARIES, DIR_MEMORIES)
+            ),
+        ),
+        ("文件指针可回溯（路径存在性验证通过）", all_pointers_exist),
+        (
+            "摘要 → 批量审核 → 转正为可召回记忆",
+            queue.total_count > 0 and len(recallable) == queue.total_count,
+        ),
+        ("未审核记忆不可召回（强制约束）", queue.pending_count == 0 and len(recallable) > 0),
+    ]
     print()
     print("=" * 72)
     print("长会话压缩验收总结:")
-    print(f"  ✓ {TOTAL_TURNS} 轮模拟会话上下文 token 降约 {reduction:.0f}%（≥ 50%）")
-    print(f"  ✓ 上下文只留最近 {KEEP} 轮 + {len(context.file_pointers)} 文件指针")
-    print("  ✓ VFS 四目录持久化: evidence + reasoning + summaries + memories")
-    print("  ✓ 文件指针可回溯（路径存在性验证通过）")
-    print("  ✓ 摘要 → 批量审核 → 转正为可召回记忆")
-    print("  ✓ 未审核记忆不可召回（强制约束）")
+    for line, ok in checks:
+        print(f"  {'✓' if ok else '✗'} {line}")
     print("=" * 72)
 
 

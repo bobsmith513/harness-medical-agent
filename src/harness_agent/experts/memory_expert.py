@@ -46,12 +46,23 @@ class MemoryExpertImpl:
         return "记忆专家：装配患者上下文（稳定/易变事实、过敏史硬规则、已转正记忆）。"
 
     def assemble(self, query: RetrievalQuery, context: SessionContext) -> ContextBundle:
-        """检索患者记忆 + 装配上下文包。"""
+        """检索患者记忆 + 装配上下文包（证据包未复核则 fail-closed 抛错）。
+
+        fail-closed 前置校验：与推理专家 ``ReasoningExpertImpl.reason`` 对称
+        （见 M2「未复核的证据包不得进入推理管线」强制约束）。输入闸门拦截时
+        检索门面返回 ``is_reviewed=False`` 的空包，此处必须拒绝装配并抛出，
+        由编排层 ``_memory_node`` 的异常兜底转 escalate——若静默放行，将
+        得到一个空 ``stable_facts`` 的上下文包，表现为"无记忆可用"的静默降级。
+        """
         # 软记忆召回（M3 门面：含三道闸门裁决，分区隔离强制）。
         # 召回窗口取装配专用下限（见 _MEMORY_ASSEMBLY_TOP_K）。
         pack = self._retrieval.retrieve(
             query.model_copy(update={"top_k": max(query.top_k, _MEMORY_ASSEMBLY_TOP_K)})
         )
+        if not pack.is_reviewed:
+            raise ValueError(
+                "证据包未通过装配复核（is_reviewed=False），记忆专家不得基于其装配上下文"
+            )
 
         # 稳定/易变事实分类：按 Evidence.provenance 驱动（M1 契约字段）——
         # - doctor_verified：病历核实事实（血型、既往史）→ 稳定，免重复问询；

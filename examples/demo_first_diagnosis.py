@@ -4,8 +4,8 @@
 
 完整链路（对照 development-plan.md M8 验收标准）：
 
-    用户输入（咳嗽三天伴发热）
-      → 脱敏中间件（去除患者标识）
+    用户输入（含身份证 / 手机号等患者标识）
+      → 脱敏中间件（去除患者标识，脱敏产物即编排链路的查询）
       → 路由器：需要临床推理（关键词命中"用药"）
       → 检索供给层（输入闸门通过 → 知识库双路召回 → 装配闸门复核）
       → 推理专家（证据引用 → 逐步推断 → 结论 + 自检）
@@ -14,8 +14,9 @@
       → 临床结论输出
 
 患者 pat-001 已知青霉素过敏（M2 种子数据，安全栈持有），
-但查询不直接提及过敏药名——过敏史由安全栈的硬规则精确匹配
-保障（非向量检索），输入闸门不因查询提及过敏药而拦截。
+查询文本（脱敏产物）刻意不提及过敏药名——输入闸门不做意图
+识别，检出过敏药名即拦截转人工（fail-closed）；过敏史由安全栈
+的硬规则精确匹配保障（非向量检索）。
 
 全链路使用 Mock LLM + 内存检索栈（零外部依赖）。
 """
@@ -23,6 +24,7 @@
 from __future__ import annotations
 
 import json
+import sys
 
 from harness_agent.contracts.retrieval import RetrievalQuery, StoredChunk
 from harness_agent.experts.reasoning_expert import ReasoningExpertImpl
@@ -162,6 +164,12 @@ class _StubMemoryExpert:
 
 
 def main() -> None:
+    # Windows 默认终端（代码页 936/GBK）无法编码 ✓/✗ 等符号，打印时抛
+    # UnicodeEncodeError——demo 会崩在最后的验收总结。统一按 UTF-8 输出，
+    # 消除演示环境差异。
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+
     print("M8 端到端演示一：初诊推理全链路")
     print("全链路 Mock LLM + 内存检索栈（零外部依赖）")
     print("患者档案：pat-001 张明，45 岁男，青霉素过敏，咳嗽三天伴发热")
@@ -170,17 +178,19 @@ def main() -> None:
     _print_section("步骤 0：脱敏中间件前置")
     desensitizer = PatternDesensitizer()
     # 患者姓名用显式标记（患者：xxx），与脱敏器的姓名规则一致——
-    # 裸姓名（无标记）按设计不脱敏，避免误伤临床正文中的人名
+    # 裸姓名（无标记）按设计不脱敏，避免误伤临床正文中的人名。
+    # 输入刻意不含过敏药名（如"盘尼西林"）：输入闸门不做意图识别，
+    # 检出过敏药名即拦截转人工；过敏史由安全栈硬规则精确匹配（见步骤 1）。
     raw_input = (
         "患者：张明（身份证 310101198001011234）咳嗽三天，"
-        "发烧 38.5 度，之前打盘尼西林过敏，用药方案怎么定？"
-        "电话 13812345678"
+        "发烧 38.5 度，用药方案怎么定？电话 13812345678"
     )
     redacted = desensitizer.desensitize(raw_input)
     print(f"  原始输入: {raw_input}")
     print(f"  脱敏后:   {redacted.text}")
     print(f"  移除标识: {', '.join(redacted.removed_entities)}")
     print("  → 患者标识已替换为 [REDACTED-xx] 占位符")
+    print("  → 脱敏产物将作为查询进入编排链路（见步骤 2）")
 
     # ---- 1. 装配全链路组件 ----
     _print_section("步骤 1：装配全链路组件")
@@ -214,11 +224,12 @@ def main() -> None:
     )
 
     context = SessionContext(session_id="sess-first", patient_id=PAT_PENICILLIN)
-    # 查询里不含"青霉素"是刻意的：输入闸门不做意图识别，只要查询文本
-    # 检出过敏药名就拦截转人工——患者陈述过敏史的问法（"我青霉素过敏，
-    # 能吃什么"）同样会被拦。这是 fail-closed 的代价，
+    # 查询 = 步骤 0 的脱敏产物（含 [REDACTED-xx] 占位符）——脱敏中间件
+    # 真实串进编排链路，而非仅打印展示。查询不含任何过敏药名：输入闸门
+    # 不做意图识别，检出过敏药名即拦截转人工（患者陈述过敏史的问法
+    # "我青霉素过敏，能吃什么"同样会被拦）。这是 fail-closed 的代价，
     # 已列入 README「已知边界（诚实标注）」一节。
-    user_query = "咳嗽三天伴发热，用药方案怎么定？"
+    user_query = redacted.text
 
     result = agent.handle(user_query, context)
 
@@ -309,18 +320,42 @@ def main() -> None:
 
     print(f"\n  全链路事件总数: {obs.tracer.event_count}")
 
-    # ---- 验收总结 ----
+    # ---- 验收总结（按本轮真实结果条件打印，非恒绿） ----
+    def _verdict(gate: str):
+        return next((v for v in result.gate_verdicts if v.gate == gate), None)
+
+    quality_verdict = _verdict("quality_judge")
+    output_verdict = _verdict("output")
+    checks = [
+        ("脱敏中间件前置（患者标识去除）", bool(redacted.removed_entities)),
+        (
+            "路由器规则命中（need_reasoning，零 LLM 开销）",
+            result.route.by_rule and result.route.decision == "need_reasoning",
+        ),
+        (
+            "检索供给（知识库双路召回 + 装配闸门复核）",
+            result.evidence_pack is not None and result.evidence_pack.is_reviewed,
+        ),
+        (
+            "推理专家（三段式推理链 + 自检 3/3 通过）",
+            result.conclusion is not None and result.conclusion.reasoning_chain.self_check_passed,
+        ),
+        (
+            "质量门禁（LLM-judge 忠实度 0.92 ≥ 0.70）",
+            quality_verdict is not None and quality_verdict.allowed,
+        ),
+        (
+            "输出闸门（药物安全全文扫描通过，阿奇霉素不在阻断列表）",
+            output_verdict is not None and output_verdict.allowed,
+        ),
+        ("临床结论交付（含证据溯源与推理链）", result.conclusion is not None),
+        ("全链路 trace 事件 5 个可打印", obs.tracer.event_count >= 5),
+    ]
     print()
     print("=" * 72)
     print("初诊推理全链路验收总结:")
-    print("  ✓ 脱敏中间件前置（患者标识去除）")
-    print("  ✓ 路由器规则命中（need_reasoning，零 LLM 开销）")
-    print("  ✓ 检索供给（知识库双路召回 + 装配闸门复核）")
-    print("  ✓ 推理专家（三段式推理链 + 自检 3/3 通过）")
-    print("  ✓ 质量门禁（LLM-judge 忠实度 0.92 ≥ 0.70）")
-    print("  ✓ 输出闸门（药物安全全文扫描通过，阿奇霉素不在阻断列表）")
-    print("  ✓ 临床结论交付（含证据溯源与推理链）")
-    print("  ✓ 全链路 trace 事件 5 个可打印")
+    for line, ok in checks:
+        print(f"  {'✓' if ok else '✗'} {line}")
     print("=" * 72)
 
 

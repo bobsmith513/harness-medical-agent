@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import json
+import sys
 
 from harness_agent.contracts.retrieval import RetrievalQuery
 from harness_agent.experts.reasoning_expert import ReasoningExpertImpl
@@ -165,6 +166,9 @@ def _describe(result) -> None:
 
 
 def main() -> None:
+    # Windows 默认终端（GBK）无法编码 ✓/✗，打印时抛 UnicodeEncodeError。
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     print("M8 端到端演示四：门禁拦截转人工")
     print("全链路 Mock LLM（零外部依赖）")
     print("fail-closed 语义：拦截即 interrupt，绝不静默放行")
@@ -181,7 +185,8 @@ def main() -> None:
             )
         ],
     )
-    _describe(agent.handle("肺炎用药方案", _context()))
+    r1 = agent.handle("肺炎用药方案", _context())
+    _describe(r1)
 
     # ---- 场景 2：臆测检测 ----
     _print_section("场景 2：臆测检测 → 质量门禁拦截 → 转人工")
@@ -196,7 +201,8 @@ def main() -> None:
             )
         ],
     )
-    _describe(agent.handle("肺炎用药方案", _context()))
+    r2 = agent.handle("肺炎用药方案", _context())
+    _describe(r2)
 
     # ---- 场景 3：过敏药物拦截 ----
     _print_section("场景 3：过敏药物 → 输出闸门拦截 → 转人工")
@@ -228,7 +234,8 @@ def main() -> None:
         judge_script=[_judge_output(faithfulness=0.95)],
         patient_id=PAT_PENICILLIN,
     )
-    _describe(agent.handle("肺炎用药方案", _context(PAT_PENICILLIN)))
+    r3 = agent.handle("肺炎用药方案", _context(PAT_PENICILLIN))
+    _describe(r3)
 
     # ---- 场景 4：正常对照 ----
     _print_section("场景 4：正常对照 — 门禁全通过 → 结论交付")
@@ -237,18 +244,47 @@ def main() -> None:
         reasoning_script=[_reasoning_output()],
         judge_script=[_judge_output(faithfulness=0.92)],
     )
-    _describe(agent.handle("肺炎用药方案", _context()))
+    r4 = agent.handle("肺炎用药方案", _context())
+    _describe(r4)
 
-    # ---- 验收总结 ----
+    # ---- 验收总结（按各场景真实结果条件打印，非恒绿） ----
+    def _blocked_by(res, gate: str) -> bool:
+        return res.conclusion is None and any(
+            v.gate == gate and not v.allowed for v in res.gate_verdicts
+        )
+
+    def _to_human(res) -> bool:
+        return res.escalation is not None and res.escalation.to_human
+
+    intercepted = (
+        _blocked_by(r1, "quality_judge"),
+        _blocked_by(r2, "quality_judge"),
+        _blocked_by(r3, "output"),
+    )
+    escalated = (_to_human(r1), _to_human(r2), _to_human(r3))
+    delivered = r4.conclusion is not None and all(v.allowed for v in r4.gate_verdicts)
+    checks = [
+        (
+            "忠实度不足拦截（0.30 < 0.70 阈值）→ interrupt 转人工",
+            intercepted[0] and escalated[0],
+        ),
+        (
+            "臆测检测拦截（has_hallucination=True）→ interrupt 转人工",
+            intercepted[1] and escalated[1],
+        ),
+        (
+            "过敏药物拦截（输出闸门全文扫描）→ interrupt 转人工",
+            intercepted[2] and escalated[2],
+        ),
+        ("正常对照：全门禁通过 → 结论正常交付", delivered),
+        ("fail-closed 语义：拦截即撤回结论，绝不静默降级放行", all(intercepted)),
+        ("每次拦截都产出 escalation（to_human=True），无应答权出口", all(escalated)),
+    ]
     print()
     print("=" * 72)
     print("门禁拦截转人工验收总结:")
-    print("  ✓ 忠实度不足拦截（0.30 < 0.70 阈值）→ interrupt 转人工")
-    print("  ✓ 臆测检测拦截（has_hallucination=True）→ interrupt 转人工")
-    print("  ✓ 过敏药物拦截（输出闸门全文扫描）→ interrupt 转人工")
-    print("  ✓ 正常对照：全门禁通过 → 结论正常交付")
-    print("  ✓ fail-closed 语义：拦截即撤回结论，绝不静默降级放行")
-    print("  ✓ 每次拦截都产出 escalation（to_human=True），无应答权出口")
+    for line, ok in checks:
+        print(f"  {'✓' if ok else '✗'} {line}")
     print("=" * 72)
 
 

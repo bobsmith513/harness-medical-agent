@@ -17,7 +17,10 @@
 
 from __future__ import annotations
 
-from harness_agent.contracts.retrieval import StoredChunk
+import sys
+
+from harness_agent.contracts.experts import ContextBundle
+from harness_agent.contracts.retrieval import RetrievalQuery, StoredChunk
 from harness_agent.llm.mock import MockLLMClient
 from harness_agent.models.audit import GateVerdict
 from harness_agent.models.evidence import (
@@ -140,6 +143,9 @@ def _stub_reasoning_expert():
 
 
 def main() -> None:
+    # Windows 默认终端（GBK）无法编码 ✓/✗，打印时抛 UnicodeEncodeError。
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     print("M8 端到端演示二：复诊记忆命中免问询")
     print("全链路内存 VFS + 内存检索栈（零外部依赖）")
     print("患者档案：pat-004 赵雪，60 岁女，2 型糖尿病复查")
@@ -170,7 +176,8 @@ def main() -> None:
     memory = queue.submit_from_summary({**summary, "patient_id": PAT_DIABETES})
     print(f"\n  提交审核: memory_id={memory.memory_id[:16]}...")
     print(f"  状态: {memory.status}")
-    print(f"  可召回: {'是' if memory.can_be_recalled() else '否'}")
+    submitted_can_recall = memory.can_be_recalled()
+    print(f"  可召回: {'是' if submitted_can_recall else '否'}")
 
     # 自动审核：doctor_verified + high → 自动通过
     print("\n  自动审核（doctor_verified + high 自动通过）:")
@@ -215,14 +222,22 @@ def main() -> None:
     # 复诊场景：记忆专家装配上下文
     safety = build_safety_stack()
 
-    # demo 记忆专家：直接使用已审核记忆（生产环境走 BGE 检索召回）
-    from harness_agent.contracts.experts import ContextBundle
-
     followup_context = SessionContext(patient_id=PAT_DIABETES, session_id="sess-followup")
+    followup_query = "上次查的血糖，二甲双胍需要调药吗？"
 
-    print("\n  复诊查询: 上次查的血糖，二甲双胍需要调药吗？")
+    print(f"\n  复诊查询: {followup_query}")
     print(f"  可召回记忆: {len(recallable)} 条")
-    stable_facts = [mem.content for mem in recallable]
+
+    # 已审核记忆经检索层真实召回（双路召回 + RRF + 装配闸门，分区隔离）——
+    # 非注入：未审核记忆不入索引，天然不可召回
+    recall_pack = stack.service.retrieve(
+        RetrievalQuery(
+            text=followup_query,
+            patient_id=PAT_DIABETES,
+            session_id="sess-followup",
+        )
+    )
+    stable_facts = [ev.content for ev in recall_pack.evidence]
     allergies = safety.allergy_store.get(PAT_DIABETES)
     bundle = ContextBundle(
         patient_id=PAT_DIABETES,
@@ -258,15 +273,23 @@ def main() -> None:
     _print_section("Phase 4：编排层验证（no_reasoning 路径免推理）")
 
     class _DemoMemoryExpert:
-        """demo 记忆专家：直接返回已审核记忆（生产走 BGE 检索召回）。"""
+        """demo 记忆专家：经检索层真实召回已审核记忆（与生产同链路）。"""
 
         name = "memory_expert"
 
         def assemble(self, query, context):
+            text = query.text if hasattr(query, "text") else str(query)
+            pack = stack.service.retrieve(
+                RetrievalQuery(
+                    text=text,
+                    patient_id=context.patient_id,
+                    session_id=context.session_id,
+                )
+            )
             return ContextBundle(
                 patient_id=context.patient_id,
                 allergies=safety.allergy_store.get(context.patient_id),
-                stable_facts=stable_facts,
+                stable_facts=[ev.content for ev in pack.evidence],
             )
 
     agent = build_orchestrator(
@@ -284,16 +307,27 @@ def main() -> None:
         print(f"  上下文包: 稳定事实 {len(b.stable_facts)} 条 / 过敏 {len(b.allergies)} 条")
     print("  → 记忆专家装配完成，无需推理专家介入")
 
-    # ---- 验收总结 ----
+    # ---- 验收总结（按本轮真实结果条件打印，非恒绿） ----
+    persisted = compactor.directory.exists(f"/memories/{memory.memory_id}.json")
+    checks = [
+        (
+            "初诊摘要标注来源置信度 + 提交审核队列",
+            memory.provenance == "doctor_verified" and memory.confidence == "high",
+        ),
+        ("审核通过 → 转正为可召回记忆 + 持久化到 /memories/", bool(recallable) and persisted),
+        ("复诊时记忆专家召回已审核记忆（分区隔离）", len(stable_facts) > 0),
+        ("免重复问询（稳定事实直接命中）", len(bundle.stable_facts) > 0),
+        ("未审核记忆不可召回（can_be_recalled=False 强制约束）", not submitted_can_recall),
+        (
+            "编排层 no_reasoning 路径验证（记忆专家直接装配）",
+            result.route.decision == "no_reasoning" and result.context_bundle is not None,
+        ),
+    ]
     print()
     print("=" * 72)
     print("复诊记忆命中免问询验收总结:")
-    print("  ✓ 初诊摘要标注来源置信度 + 提交审核队列")
-    print("  ✓ 审核通过 → 转正为可召回记忆 + 持久化到 /memories/")
-    print("  ✓ 复诊时记忆专家召回已审核记忆（分区隔离）")
-    print("  ✓ 免重复问询（稳定事实直接命中）")
-    print("  ✓ 未审核记忆不可召回（can_be_recalled=False 强制约束）")
-    print("  ✓ 编排层 no_reasoning 路径验证（记忆专家直接装配）")
+    for line, ok in checks:
+        print(f"  {'✓' if ok else '✗'} {line}")
     print("=" * 72)
 
 

@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -181,15 +182,32 @@ class TestFileBackedVfsStore:
             assert not store.exists("sess-1", "/evidence/ev-1.json")
 
     def test_directory_traversal_protection(self):
-        """目录穿越防护（.. 被清理）。"""
+        """目录穿越防护：``..`` 被清除，且不逃逸到 root_dir 之外。
+
+        实现口径（见 ``FileBackedVfsStore._physical``）：``..`` 是**删除**而非
+        按 POSIX 解析，因此 ``/evidence/../ev-1.json`` 被净化为
+        ``/evidence/ev-1.json``（落点仍在 evidence/ 内，未上跳到 session 根）。
+        本测试断言的是真正的安全属性——不逃逸 root，而非净化后的具体内容。
+        """
         with tempfile.TemporaryDirectory() as tmp:
             store = FileBackedVfsStore(tmp)
             # 正常写入
             store.write("sess-1", "/evidence/ev-1.json", "data")
             # 尝试穿越路径（应被清理为正常路径）
             store.write("sess-1", "/evidence/../ev-1.json", "hacked")
-            # 不应逃逸到 root_dir 之外
+            # 1. 文件仍在（被净化后的路径可读）
             assert store.read("sess-1", "/evidence/ev-1.json") is not None
+            # 2. 落点确实在 root 之内（未上跳、未逃逸）
+            root = Path(tmp).resolve()
+            assert (root / "sess-1" / "evidence" / "ev-1.json").exists()
+            # 3. 真正的安全属性：没有任何文件被写到 root_dir 之外
+            assert root.joinpath("sess-1", "evidence", "ev-1.json").is_file()
+            escaped = [
+                p
+                for p in root.parent.rglob("ev-1.json")
+                if root not in p.resolve().parents and p.resolve() != root
+            ]
+            assert escaped == []
 
 
 class TestBuildVfsStore:
