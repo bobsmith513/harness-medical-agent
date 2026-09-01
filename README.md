@@ -226,21 +226,26 @@ cp .env.example .env
 ## 白盒日志全链路走读
 
 以下三个 demo 均为**真实运行日志**（`uv run python examples/demo_*.py` 原样输出）：
-编排、检索、门禁与全链路 trace 均为实际执行结果，中间数据非手写；其中 LLM 应答由
-`MockLLMClient` 按预设剧本提供——这是零依赖模式的定位（机制详见「测试体系」），
-真实模型的在线链路见[在线调用模式](#在线调用模式填两行-env-即可运行)。
+编排、检索、门禁与全链路 trace 均为实际执行结果，中间数据非手写。
 
-两点成色说明（避免误读）：零依赖 demo 中检索层使用**静态证据桩**
-（`examples/demo_first_diagnosis.py` 的 `_StaticRetrieval`，返回预置 `EvidencePack`），
-"忠实度 0.92" 等门禁数值为剧本预设值——demo 验证的是**编排与门禁的工程行为**
-（路由裁决、拦截链、trace 结构），不是检索与推理的应答质量。
+两点成色说明（避免误读）：
 
-**静态桩的连带影响**：输入闸门（检索前）与装配闸门（证据包交付前）由
-检索服务内部调用，检索层被桩替换后**这两道闸门在 demo 链路中不执行**——
-demo 打印的"阻断药物"是静态包的字段，不是闸门判定结果。
-三道闸门的真实行为见 `examples/demo_retrieval.py` 与
-`tests/test_safety_*`（37 条对抗样本，漏检率要求为 0）。
-输出闸门位于门禁流水线、不依赖检索层，因此 demo 中它是真实执行的。
+- **只有 LLM 应答文本是剧本**：三类模型的输出由 mock 客户端按预设剧本
+  提供（推理链 / judge 打分 / 路由兜底），这是零依赖模式的定位（机制详见
+  「测试体系」）。所以"忠实度 0.92"这类数值是**剧本值**——demo 验证的是
+  **编排与门禁的工程行为**（路由裁决、拦截链、引用校验、trace 结构），
+  不是模型的应答质量。真实模型的在线链路见
+  [在线调用模式](#在线调用模式填两行-env-即可运行)。
+- **除 LLM 文本外全部真实执行**：脱敏、路由、检索供给层（输入闸门 →
+  哈希嵌入 + BM25 双路召回 → RRF 融合 → identity 精排 → 同父补全 →
+  装配闸门）、推理专家自检、judge 输出解析、输出闸门药物扫描、VFS 与
+  审计落盘。证据 ID 与结论 ID 每次运行都不同，下文日志是其中一次运行的
+  快照。推理替身在**调用时刻**从提示里取真实 `evidence_id` 填进
+  citations（`examples/demo_first_diagnosis.py` 的 `_DynamicReasoningLLM`），
+  因此"引用真实性"自检是在真实数据上跑的，不是写死 ID 走过场。
+
+三道闸门的对抗性验证（37 条对抗样本，漏检率要求为 0）见
+`examples/demo_retrieval.py` 与 `tests/test_safety_*`。
 
 ### 例一：初诊推理全链路（7 步）
 
@@ -251,10 +256,10 @@ flowchart TD
     A["<b>步骤 0：脱敏中间件</b><br/>输入: 患者：张明（身份证 310101198001011234）...电话 13812345678<br/>输出: [REDACTED-NAME]（身份证 [REDACTED-ID]）...电话 [REDACTED-PHONE]<br/>移除: ID / PHONE / NAME（仅类型 + 掩码，不含原文）"]
     B["<b>步骤 1：装配组件</b><br/>知识库入库: 2 条（CAP 指南）<br/>过敏史: 盘尼西林 → penicillin (ATC=J01CE01)<br/>交叉反应阻断: β-内酰胺组共 12 条（青霉素类/一至四代头孢/碳青霉烯）"]
     C["<b>步骤 2：路由器裁决</b><br/>查询: [REDACTED-NAME]（身份证 [REDACTED-ID]）咳嗽三天，发烧 38.5 度，用药方案怎么定？电话 [REDACTED-PHONE]<br/>路由: need_reasoning (by_rule=True)<br/>规则命中: 用药"]
-    D["<b>步骤 3：检索供给层</b><br/>证据包: 1 条, is_reviewed=True<br/>命中: ev-1 CAP 患者 β-内酰胺类过敏 → 阿奇霉素替代"]
-    E["<b>步骤 4：推理专家</b><br/>自检: 3/3 通过（引用真实/因果正向/依据充分）<br/>1. evidence: 引用证据...阿奇霉素为安全替代 (引用: ev-1)<br/>2. inference: β-内酰胺类过敏史，阿奇霉素无交叉反应<br/>3. conclusion: 建议阿奇霉素 500mg qd × 3-5 天"]
+    D["<b>步骤 3：检索供给层</b><br/>证据包: 2 条, is_reviewed=True（装配闸门复核通过）<br/>命中1: CAP 经验性治疗 → 阿奇霉素 500mg qd<br/>命中2: CURB-65 评分评估严重程度"]
+    E["<b>步骤 4：推理专家</b><br/>自检: 3/3 通过（引用真实/因果正向/依据充分）<br/>1. evidence: 引用证据...阿奇霉素为安全替代 (引用: 真实 ev-xxx)<br/>2. inference: β-内酰胺类过敏史，阿奇霉素无交叉反应<br/>3. conclusion: 建议阿奇霉素 500mg qd × 3-5 天"]
     F["<b>步骤 5：质量门禁</b><br/>quality_judge: 通过 — 忠实度 0.92 ≥ 0.70<br/>output: 通过 — 未涉及过敏药物（阿奇霉素不在阻断列表）"]
-    G["<b>步骤 6：临床结论</b><br/>结论: CAP 经验性治疗：阿奇霉素 500mg qd × 3-5 天<br/>产出者: reasoning_expert<br/>引用证据: ev-1<br/>结论ID: cc-8ae8530c4c1a（每次运行不同）"]
+    G["<b>步骤 6：临床结论</b><br/>结论: CAP 经验性治疗：阿奇霉素 500mg qd × 3-5 天<br/>产出者: reasoning_expert<br/>引用证据: 真实 ev-xxx（每次运行不同）<br/>结论ID: cc-c820ddbd4ad3（每次运行不同）"]
     H["<b>步骤 7：全链路 trace</b><br/>route → retrieve → reason → gate_check → conclude<br/>全链路事件总数: 5"]
 
     A --> B --> C --> D --> E --> F --> G --> H
@@ -298,22 +303,27 @@ M8 端到端演示一：初诊推理全链路
 ========================================================================
 步骤 3：检索供给层
 ========================================================================
-  证据包: 1 条, is_reviewed=True
-  阻断药物: （无）
-  [命中] [ev-1] CAP 患者若对 β-内酰胺类过敏，可选大环内酯类（阿奇霉素）替代。
-          阿奇霉素 500mg qd，疗程 3-5 天，与青霉素无交叉反应。
+  证据包: 2 条, is_reviewed=True
+  阻断药物: ['amoxicillin', 'amoxicillin_clavulanate', 'ampicillin', 'cefazolin',
+            'cefepime', 'ceftazidime', 'ceftriaxone', 'cefuroxime', 'ertapenem',
+            'imipenem_cilastatin', 'meropenem', 'penicillin', 'piperacillin']
+  [命中] [ev-03b04bd7b482] 社区获得性肺炎（CAP）：咳嗽、发热患者的经验性治疗
+          可选大环内酯类（阿奇霉素）。阿奇霉素 500mg qd，疗程 3-5 天。
+          对 β-内酰胺类过敏者同样适用。
+  [命中] [ev-ed3d11f4ed33] 社区获得性肺炎评估：CURB-65 评分用于判断严重程度。
+          评分 0-1 分可门诊治疗。
 
 ========================================================================
 步骤 4：推理专家（三段式推理链 + 自检）
 ========================================================================
-  自检: True — 自检通过（3/3）：引用真实、因果正向、依据充分；证据 1 条
+  自检: True — 自检通过（3/3）：引用真实、因果正向、依据充分；证据 2 条
   推理链 3 步:
     1. [evidence] 引用证据：CAP 患者对 β-内酰胺类过敏时，阿奇霉素为
-       安全替代方案，常规剂量 500mg qd (引用: ['ev-1'])
+       安全替代方案，常规剂量 500mg qd (引用: ['ev-03b04bd7b482'])
     2. [inference] 患者有 β-内酰胺类过敏史，阿奇霉素与之无交叉反应，
        可安全使用；结合咳嗽发热症状与 CAP 指南，经验性治疗合理
     3. [conclusion] 建议阿奇霉素 500mg qd，疗程 3-5 天，
-       门诊随访观察疗效 (引用: ['ev-1'])
+       门诊随访观察疗效 (引用: ['ev-03b04bd7b482'])
 
 ========================================================================
 步骤 5：质量门禁（LLM-judge + 输出闸门）
@@ -326,8 +336,8 @@ M8 端到端演示一：初诊推理全链路
 ========================================================================
   结论: CAP 经验性治疗：阿奇霉素 500mg qd × 3-5 天
   产出者: reasoning_expert
-  引用证据: ['ev-1']
-  结论ID: cc-8ae8530c4c1a
+  引用证据: ['ev-03b04bd7b482']
+  结论ID: cc-c820ddbd4ad3
 
 ========================================================================
 步骤 7：全链路 trace 事件
@@ -335,7 +345,7 @@ M8 端到端演示一：初诊推理全链路
 [TRACE] route trace=trace-first payload_keys=['decision', 'by_rule']
   [TRACE] route: {'decision': 'need_reasoning', 'by_rule': True}
 [TRACE] retrieve trace=trace-first payload_keys=['query', 'evidence_count']
-  [TRACE] retrieve: {'query': '[REDACTED-NAME]（身份证 [REDACTED-ID]）咳嗽三天，发烧 38.5 度，用药方案怎么定？电话 [REDACTED-PHONE]', 'evidence_count': 1}
+  [TRACE] retrieve: {'query': '[REDACTED-NAME]（身份证 [REDACTED-ID]）咳嗽三天，发烧 38.5 度，用药方案怎么定？电话 [REDACTED-PHONE]', 'evidence_count': 2}
 [TRACE] reason trace=trace-first payload_keys=['chain_steps', 'self_check']
   [TRACE] reason: {'chain_steps': 3, 'self_check': True}
 [TRACE] gate_check trace=trace-first payload_keys=['quality_judge', 'output']
@@ -345,7 +355,9 @@ M8 端到端演示一：初诊推理全链路
   全链路事件总数: 5
 
 > 注：trace 行与白盒打印都走 stderr，终端里会交错出现；此处按实际输出
-> 原样保留（未做人为整理）。结论 ID / session ID 每次运行不同。
+> 原样保留（未做人为整理）。**证据 ID / 结论 ID / session ID 每次运行都不同**，
+> 上文是其中一次运行的快照——真实检索每次生成新的 `evidence_id`，
+> 推理替身从提示里取当次的 ID 引用。
 
 ========================================================================
 初诊推理全链路验收总结:
@@ -556,7 +568,7 @@ fail-closed 语义：拦截即 interrupt，绝不静默放行
 |------|------|---------|---------|
 | `harness-online` | **在线问诊入口（交互式）** | 填 .env 两行 → 真实在线推理 + 白盒输出 | `uv run harness-online` |
 | `mock_openai_server.py` | 无 Key 验证在线链路 | 真 HTTP 服务模拟 OpenAI 协议，含网络层的全链路跑通 | `uv run python examples/mock_openai_server.py` |
-| `demo_first_diagnosis.py` | 初诊推理全链路 | 脱敏→路由→检索→推理→门禁→结论→trace（7 步） | `uv run python examples/demo_first_diagnosis.py` |
+| `demo_first_diagnosis.py` | 初诊推理全链路 | 脱敏→路由→**真实检索栈**（双路召回+三道闸门）→推理→门禁→结论→trace（7 步） | `uv run python examples/demo_first_diagnosis.py` |
 | `demo_followup_memory.py` | 复诊记忆命中免问询 | 摘要→审核→转正→召回→编排验证（4 Phase） | `uv run python examples/demo_followup_memory.py` |
 | `demo_long_conversation.py` | 长会话压缩 | 20 轮压缩 81%（估算值，非基准测试）、VFS 持久化、批量审核（5 Phase） | `uv run python examples/demo_long_conversation.py` |
 | `demo_gate_interception.py` | 门禁拦截转人工 | 忠实度/臆测/过敏药物 3 拦截 + 1 正常对照 | `uv run python examples/demo_gate_interception.py` |
@@ -623,6 +635,8 @@ uv run pytest -vv --durations=15 -rs   # 逐条 + 最慢 15 项 + 跳过原因
 | 同父补全隔离 | `sibling_ids` 取回的相邻 chunk 在门面层校验 `patient_id` | 底层 `get_chunk` 是按 chunk_id 的全局直查（三处实现均无 patient_id 条件），越界 chunk 在进入证据包前被丢弃 |
 | 精排与语义 | 零依赖默认为哈希嵌入 + identity 精排 | 无语义能力，见架构图上的诚实标注 |
 | 输入闸门不做意图识别 | 查询文本检出过敏药名即拦截，不区分"陈述过敏史"与"要求开该药" | 患者说"我青霉素过敏，能吃什么"会被拦截转人工——这是 fail-closed 的代价，当前取舍是宁可误拦。改进方向：在 `safety/input_gate.py` 加语境判定（"过敏/禁用/不能吃"→陈述，"建议/开/换用"→施动） |
+| 装配闸门按**整条证据**过滤 | 证据正文只要提到患者过敏药物（哪怕是在说"禁用/改用"），整条被丢弃 | 真实指南条目普遍是"青霉素过敏者改用阿奇霉素"这种写法，全量过滤会误伤——**这条边界是接入真实检索栈后才暴露的**：`demo_first_diagnosis.py` 的知识条目原本写着"与青霉素无交叉反应"，在 mock 静态包下能走通，换成真实 `HybridRetrievalService` 后即被装配闸门整条过滤、导致证据包为空转人工。当前取舍仍是宁可误拦；改进方向是让装配闸门区分"提及"与"推荐"（如只过滤推荐语气的句子，或保留条目但打上警示标记交给推理层） |
+| 脱敏产物直接用于检索 | 查询进入检索层时已含 `[REDACTED-NAME]` / `[REDACTED-ID]` 等占位符 | 占位符会稀释 BM25 的词项权重，零依赖模式下稠密路是哈希嵌入（无语义能力），召回几乎全靠稀疏路关键词。改进方向：检索用原文、审计与展示用脱敏产物（两套文本分轨） |
 | `no_reasoning` 路径不执行输出闸门 | 该路径产出 `ContextBundle` 而非临床结论，而 `DrugSafetyOutputGate.check` 的入参是 `ClinicalConclusion`，结构上无结论可扫 | 图结构为 `memory → finalize`（见 `orchestrator/agent.py`），不经 `gates` 节点。记忆召回的稳定事实不做药物安全全文扫描，其安全性由检索侧的**输入闸门与装配闸门**保证；记忆专家对未复核证据包（`is_reviewed=False`）抛错转人工，不静默降级。推理路径（`need_reasoning`）三道闸门 + 两道门禁全执行，不受此影响 |
 
 ## 配置详情
@@ -748,9 +762,11 @@ uv.lock           # 锁文件（根包 harness-agent，勿用其他环境的 loc
 [design-decisions.md](docs/design-decisions.md)（关键实现参数的理由与数据口径）、
 以及 `tests/`（每项安全与降级语义的断言）。
 
-评估路径建议：先看上述三份产出物，再看提交历史——仓库按
-M0→M9 里程碑组织为渐进提交链，每个提交对应一个可验证的增量，
-结果与过程都在。
+**评估路径建议：以这三份产出物为准。** 它们回答"为什么这么做"和
+"每个数字怎么来的"，并且都可以本地复跑核对（`uv run pytest` /
+`uv run python examples/demo_*.py`）。提交按 M0→M9 里程碑组织，
+commit message 能看出增量顺序，但**结论一律以产出物与测试为准**——
+提交历史只说明"按什么顺序做的"，不作为能力凭据。
 
 ## 合规声明
 

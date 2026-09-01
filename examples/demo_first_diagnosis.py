@@ -18,19 +18,28 @@
 识别，检出过敏药名即拦截转人工（fail-closed）；过敏史由安全栈
 的硬规则精确匹配保障（非向量检索）。
 
-全链路使用 Mock LLM + 内存检索栈（零外部依赖）。
+**哪些是真跑的、哪些是脚本**（避免把演示当成证明）：
+
+- **真实执行**：脱敏、路由、检索供给层（`HybridRetrievalService`：
+  输入闸门 → 哈希嵌入 + BM25 双路召回 → RRF 融合 → identity 精排
+  → 同父补全 → 装配闸门）、推理专家自检、LLM-judge 解析、输出闸门
+  药物扫描、VFS/审计落盘、全链路 trace；
+- **脚本提供**：三处 LLM 应答的文本（推理链 / judge 打分 / 路由兜底
+  未触发）。门禁拿到的是真实解析结果，不是预置的"通过"常量。
+  推理脚本的 citation 在调用时刻从提示里取真实 evidence_id
+  （见 ``_DynamicReasoningLLM``），不是写死的 ID。
 """
 
 from __future__ import annotations
 
 import json
+import re
 import sys
 
-from harness_agent.contracts.retrieval import RetrievalQuery, StoredChunk
+from harness_agent.contracts.llm import LLMMessage, LLMResult
+from harness_agent.contracts.retrieval import StoredChunk
 from harness_agent.experts.reasoning_expert import ReasoningExpertImpl
 from harness_agent.llm.mock import MockLLMClient
-from harness_agent.models.audit import GateVerdict
-from harness_agent.models.evidence import Evidence, EvidencePack, SourceRef
 from harness_agent.models.session import SessionContext
 from harness_agent.observability import PatternDesensitizer, build_observability_stack
 from harness_agent.orchestrator import build_orchestrator
@@ -40,13 +49,24 @@ from harness_agent.safety import build_safety_stack
 PAT_PENICILLIN = "pat-001"  # M2 种子：青霉素过敏（阻断 beta_lactam 全组）
 
 # 合成知识条目（来自 synthetic_data.py 的 KNOWLEDGE_ENTRIES）
+#
+# 两条条目都刻意带上主诉关键词（咳嗽 / 发热），因为零依赖模式用的是
+# **哈希嵌入 + BM25**：稠密路无语义能力，召回几乎全落在稀疏路关键词上。
+# 条目只写"β-内酰胺过敏"而不写主诉词的话，脱敏后的查询（含
+# [REDACTED-xx] 占位符噪声）会召回不到这条本该命中的证据。
+#
+# 另一处刻意的取舍：kb-cap-01 不写具体过敏药名（只用"β-内酰胺类"类名）。
+# 一旦正文出现"青霉素"，**装配闸门会把它整条过滤掉**——这是闸门按设计
+# 工作（过滤含患者过敏药物实体的证据），但真实指南条目普遍是
+# "青霉素过敏者改用阿奇霉素"这种写法，全量过滤会误伤。这是当前实现
+# 的一条真实边界，已列入 README「已知边界（诚实标注）」。
 _KB_ENTRIES = [
     StoredChunk(
         chunk_id="kb-cap-01",
         content=(
-            "社区获得性肺炎（CAP）常见病原体为肺炎链球菌。"
-            "阿奇霉素属于大环内酯类，适用于 CAP 经验性治疗，"
-            "成人常规剂量 500mg qd，疗程 3-5 天。"
+            "社区获得性肺炎（CAP）：咳嗽、发热患者的经验性治疗可选"
+            "大环内酯类（阿奇霉素）。阿奇霉素 500mg qd，疗程 3-5 天。"
+            "对 β-内酰胺类过敏者同样适用。"
         ),
     ),
     StoredChunk(
@@ -56,46 +76,7 @@ _KB_ENTRIES = [
 ]
 
 
-def _approved_pack(patient_id: str = PAT_PENICILLIN) -> EvidencePack:
-    """已通过装配复核的证据包（模拟检索层返回的结果）。
-
-    在生产环境中，此包由 HybridRetrievalService.retrieve 返回；
-    demo 中使用静态包确保全链路可复现（与 demo_m5_gates.py 同模式）。
-    """
-    evidence = Evidence(
-        evidence_id="ev-1",
-        content=(
-            "CAP 患者若对 β-内酰胺类过敏，可选大环内酯类（阿奇霉素）替代。"
-            "阿奇霉素 500mg qd，疗程 3-5 天，与青霉素无交叉反应。"
-        ),
-        source=SourceRef(
-            source_id="kb-cap-01",
-            source_type="document",
-            chunk_id="kb-cap-01",
-        ),
-        confidence="high",
-        provenance="knowledge_base",
-    )
-    return EvidencePack(
-        session_id="sess-first",
-        patient_id=patient_id,
-        query="咳嗽发热用药方案",
-        evidence=[evidence],
-        assembly_gate=GateVerdict(gate="assembly", allowed=True, reason="复核通过"),
-    )
-
-
-class _StaticRetrieval:
-    """检索桩：恒定返回预置证据包（demo 模式，与 demo_m5_gates.py 同模式）。"""
-
-    def __init__(self, pack: EvidencePack) -> None:
-        self._pack = pack
-
-    def retrieve(self, query: RetrievalQuery) -> EvidencePack:
-        return self._pack
-
-
-def _reasoning_output(citation: str = "ev-1") -> str:
+def _reasoning_output(citation: str) -> str:
     """推理专家 LLM 合法输出（三段式推理链）。
 
     注意：推理链文本不直接提及患者过敏的具体药名（如"青霉素"），
@@ -143,6 +124,49 @@ def _judge_output() -> str:
             "reason": "结论有充分证据支撑，无臆测，因果顺序正确",
         }
     )
+
+
+class _DynamicReasoningLLM:
+    """推理 LLM 替身：调用时刻才从提示中取真实 evidence_id 填进 citations。
+
+    为什么不用 ``MockLLMClient(role="reasoning", script=[...])``：
+    证据 ID 由检索层在 ``retrieve`` 时动态生成（每次调用都是新 ID），
+    而 MockLLMClient 的脚本在**构造时**就固定了——写死 "ev-1" 会让
+    推理专家的自检（引用真实性：每条 citation 必须存在于证据包）
+    失败，demo 会退化成"转人工"。
+
+    本替身把脚本延迟到 ``complete`` 时刻执行，从提示的"合法
+    evidence_id 列表"里解析出真实 ID 再套用三段式文本。这等价于真实
+    LLM 的行为（读提示 → 引用提示里给出的 ID），因此推理专家的自检、
+    LLM-judge、输出闸门走的都是与生产一致的路径。
+
+    它实现 ``LLMClient`` 契约，与 ``MockLLMClient`` / ``OpenAICompatClient``
+    可互换——换成在线端点时删掉这个类即可，编排层零改动。
+    """
+
+    role = "reasoning"
+
+    def __init__(self) -> None:
+        self.calls: list[list[LLMMessage]] = []
+
+    def complete(
+        self,
+        messages: list[LLMMessage],
+        *,
+        temperature: float = 0.2,  # noqa: ARG002
+        max_tokens: int | None = None,  # noqa: ARG002
+    ) -> LLMResult:
+        self.calls.append(list(messages))
+        user_content = "".join(m.content for m in messages if m.role != "system")
+        ev_ids = sorted(set(re.findall(r"\bev-[0-9a-f]{6,}\b", user_content)))
+        # 无合法证据可引用时返回空文本，消费方按解析失败 fail-closed 升级
+        text = "" if not ev_ids else _reasoning_output(ev_ids[0])
+        return LLMResult(
+            text=text,
+            prompt_tokens=sum(len(m.content) for m in messages),
+            completion_tokens=len(text.split()) if text.strip() else 0,
+            model="mock-reasoning",
+        )
 
 
 def _print_section(title: str) -> None:
@@ -211,7 +235,8 @@ def main() -> None:
 
     # ---- 2. 路由器裁决 ----
     _print_section("步骤 2：路由器裁决")
-    reasoning_llm = MockLLMClient(role="reasoning", script=[_reasoning_output()])
+    # 推理替身在调用时刻从提示中取真实 evidence_id（见类 docstring）。
+    reasoning_llm = _DynamicReasoningLLM()
     judge_llm = MockLLMClient(role="judge", script=[_judge_output()])
 
     agent = build_orchestrator(
@@ -219,7 +244,7 @@ def main() -> None:
             "reasoning_expert": ReasoningExpertImpl(llm=reasoning_llm),
             "memory_expert": _StubMemoryExpert(),
         },
-        retrieval=_StaticRetrieval(_approved_pack(PAT_PENICILLIN)),
+        retrieval=stack.service,
         judge_llm=judge_llm,
     )
 

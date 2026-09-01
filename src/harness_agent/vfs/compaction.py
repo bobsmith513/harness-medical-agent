@@ -8,7 +8,11 @@
 4. 上下文 ``file_pointers`` 登记三个文件指针
 5. Token 预算更新：移除溢出轮 token，仅留指针引用
 
-验收指标：20 轮模拟会话上下文 token 降约 50%。
+**压缩率口径**：验收下限是"20 轮模拟会话上下文 token 降幅 ≥ 50%"，
+零依赖 demo 的合成输入下实测约 81%。**它不是基准测试结果**——
+每轮 token 数与压缩后的估算都是 demo 内的假设值，未在真实
+tokenizer 与真实 LLM 计费场景下实测。口径见
+``docs/design-decisions.md`` 第 2 节。
 """
 
 from __future__ import annotations
@@ -85,7 +89,8 @@ class ContextCompactor:
     与 ``SessionContext.add_turn`` 配合使用：
     - ``add_turn`` 返回被移出上下文的旧轮列表；
     - 本类接收旧轮列表，持久化至 VFS 并登记文件指针；
-    - 上下文只留最近 ``keep`` 轮 + 文件指针，长会话 Token 降约 50%。
+    - 上下文只留最近 ``keep`` 轮 + 文件指针，长会话 Token 降幅
+      验收下限 ≥ 50%（压缩率口径见模块 docstring）。
     """
 
     def __init__(self, directory: VfsDirectory | None = None) -> None:
@@ -231,7 +236,15 @@ class ContextCompactor:
 
     @staticmethod
     def estimate_full_context_tokens(context: SessionContext) -> int:
-        """估算未压缩时的全量上下文 token（含全部轮 + 证据 + 推理）。"""
+        """估算未压缩时的全量上下文 token（含全部轮 + 证据 + 推理）。
+
+        **调用时机警告**：必须在 ``SessionContext.add_turn`` 截断
+        ``recent_turns`` **之前**调用。``add_turn`` 会就地丢弃超出
+        keep 的旧轮，压缩之后再调本方法只能看到剩下的 ``keep`` 轮，
+        与 ``estimate_compressed_tokens`` 的遍历范围完全相同——
+        两者相减会得到约 0% 的压缩率。真实的全量基数要由调用方在
+        逐轮 add_turn 时自行累加（见 ``examples/demo_long_conversation.py``）。
+        """
         total = 0
         for turn in context.recent_turns:
             total += turn.token_count or _estimate_tokens(turn.user_input)

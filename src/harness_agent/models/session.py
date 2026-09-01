@@ -62,7 +62,7 @@ class SessionContext(BaseModel):
 
     长会话下证据、推理链、摘要持久化至虚拟目录，上下文只留最近 3 轮
     与文件指针（``file_pointers``：逻辑路径 -> VFS 文件名），
-    20 轮以上长会话 Token 降约 50% 的实现载体。
+    长会话 Token 降幅验收下限 ≥ 50% 的实现载体。
     """
 
     session_id: str = Field(default_factory=lambda: new_id("sess"))

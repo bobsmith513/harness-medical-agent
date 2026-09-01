@@ -8,7 +8,7 @@
 
     20 轮对话 → 超出 keep=3 的旧轮持久化至 VFS
     → 上下文只留最近 3 轮 + 文件指针
-    → Token 降幅 ≥ 50%（验收指标）
+    → Token 降幅 ≥ 50%（验收下限；本 demo 为合成输入估算，非基准测试）
     → 文件指针可回溯（evidence/reasoning/summary 三类）
     → 摘要 → 记忆审核队列 → 批量审核
 
@@ -242,7 +242,8 @@ def main() -> None:
     recallable = queue.get_recallable("pat-001")
     checks = [
         (
-            f"{TOTAL_TURNS} 轮模拟会话上下文 token 降约 {reduction:.0f}%（≥ 50%）",
+            f"{TOTAL_TURNS} 轮模拟会话上下文 token 降约 {reduction:.0f}%"
+            f"（≥ 50%；合成输入估算，非基准测试）",
             reduction >= 50,
         ),
         (
